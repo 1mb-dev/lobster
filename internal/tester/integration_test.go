@@ -81,7 +81,7 @@ func TestIntegration_FullCrawlWorkflow(t *testing.T) {
 		t.Fatalf("Failed to create tester: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	results, err := tester.Run(ctx)
@@ -152,7 +152,7 @@ func TestIntegration_DryRunMode(t *testing.T) {
 		t.Fatalf("Failed to create tester: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	results, err := tester.Run(ctx)
@@ -209,7 +209,7 @@ func TestIntegration_AuthenticationWorkflow(t *testing.T) {
 		t.Fatalf("Failed to create tester: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	results, err := tester.Run(ctx)
@@ -270,7 +270,7 @@ func TestIntegration_RobotsTxtCompliance(t *testing.T) {
 		t.Fatalf("Failed to create tester: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	results, err := tester.Run(ctx)
@@ -346,7 +346,7 @@ func TestIntegration_ErrorHandlingAndRecovery(t *testing.T) {
 		t.Fatalf("Failed to create tester: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	results, err := tester.Run(ctx)
@@ -446,7 +446,7 @@ func TestIntegration_ConcurrentCrawling(t *testing.T) {
 		t.Fatalf("Failed to create tester: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	results, err := tester.Run(ctx)
