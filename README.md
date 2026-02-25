@@ -1,5 +1,9 @@
 # Lobster
 
+[![CI](https://github.com/1mb-dev/lobster/actions/workflows/ci.yml/badge.svg)](https://github.com/1mb-dev/lobster/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/1mb-dev/lobster/v2.svg)](https://pkg.go.dev/github.com/1mb-dev/lobster/v2)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **Lobster** is an intelligent web stress testing tool that automatically discovers URLs by crawling your application and validates performance under load. Point it at your app, and it handles the rest.
 
 ## Why Lobster?
