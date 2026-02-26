@@ -56,7 +56,7 @@ type TemplateData struct {
 	TotalRequests       int64
 	SuccessfulRequests  int64
 	FailedRequests      int64
-	URLsDiscovered      int
+	URLsDiscovered      int64
 	SuccessRate         float64
 	SuccessRateClass    string
 	RequestsPerSecond   float64

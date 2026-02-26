@@ -1449,7 +1449,7 @@ func TestMonitor_VerboseMode(t *testing.T) {
 
 	// Set some results for monitor to log
 	atomic.StoreInt64(&tester.results.TotalRequests, 5)
-	tester.results.URLsDiscovered = 3
+	atomic.StoreInt64(&tester.results.URLsDiscovered, 3)
 
 	// Create a short-lived context
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)

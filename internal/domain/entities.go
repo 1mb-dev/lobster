@@ -45,7 +45,8 @@ type TestResults struct {
 	// SuccessRate is the percentage of successful requests (0-100).
 	SuccessRate float64 `json:"success_rate"`
 	// URLsDiscovered is the count of unique URLs found during link discovery.
-	URLsDiscovered int `json:"urls_discovered"`
+	// Accessed atomically from multiple goroutines during crawl.
+	URLsDiscovered int64 `json:"urls_discovered"`
 }
 
 // URLValidation represents the validation result for a single URL request.

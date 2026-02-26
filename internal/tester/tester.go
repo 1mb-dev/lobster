@@ -171,7 +171,7 @@ func (t *Tester) Run(ctx context.Context) (*domain.TestResults, error) {
 
 	// Start URL discovery with the base URL
 	t.crawler.AddURL(t.config.BaseURL, 0, t.urlQueue)
-	t.results.URLsDiscovered = t.crawler.GetDiscoveredCount()
+	atomic.StoreInt64(&t.results.URLsDiscovered, int64(t.crawler.GetDiscoveredCount()))
 
 	// Start monitoring
 	go t.monitor(ctx, startTime)
@@ -599,7 +599,7 @@ func (t *Tester) discoverLinksFromResponse(resp *http.Response, task domain.URLT
 	for _, link := range links {
 		result := t.crawler.AddURL(link, task.Depth+1, t.urlQueue)
 		if result.Added {
-			t.results.URLsDiscovered = t.crawler.GetDiscoveredCount()
+			atomic.StoreInt64(&t.results.URLsDiscovered, int64(t.crawler.GetDiscoveredCount()))
 		}
 	}
 
@@ -684,7 +684,7 @@ func (t *Tester) monitor(ctx context.Context, startTime time.Time) {
 			total := atomic.LoadInt64(&t.results.TotalRequests)
 			successful := atomic.LoadInt64(&t.results.SuccessfulRequests)
 			failed := atomic.LoadInt64(&t.results.FailedRequests)
-			discovered := t.results.URLsDiscovered
+			discovered := atomic.LoadInt64(&t.results.URLsDiscovered)
 			queueSize := len(t.urlQueue)
 
 			// Calculate elapsed time and rate
