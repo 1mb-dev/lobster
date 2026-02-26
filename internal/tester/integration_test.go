@@ -24,6 +24,9 @@ func skipSlowIntegrationTest(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	if raceEnabled {
+		t.Skip("Skipping integration test under race detector (2-10x overhead causes timeouts)")
+	}
 }
 
 // TestIntegration_FullCrawlWorkflow tests the complete crawl workflow:
