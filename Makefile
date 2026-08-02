@@ -128,3 +128,7 @@ pre-commit: fmt vet test
 
 # Default target
 .DEFAULT_GOAL := help
+
+.PHONY: setup
+setup: ## Bootstrap repo: install git hooks
+	@scripts/setup.sh
