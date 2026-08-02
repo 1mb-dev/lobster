@@ -1,0 +1,12 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures that are not secrets"
+regexTarget = "line"
+regexes = [
+  # Standard public JWT header (base64 of {"alg":"HS256","typ":"JWT"}) with a .test
+  # suffix, used as a fixture in TestBuildAuthConfig_Bearer. Carries no signature and
+  # authenticates nothing.
+  '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.test''',
+]
