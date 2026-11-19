@@ -133,6 +133,23 @@ func (r *Reporter) PrintSummary() {
 	fmt.Printf("Max Response Time:    %s\n", r.results.MaxResponseTime)
 	fmt.Printf("Requests/Second:      %.2f\n", r.results.RequestsPerSecond)
 	fmt.Printf("Success Rate:         %.2f%%\n", r.results.SuccessRate)
+	if r.results.CrawlComplete {
+		fmt.Printf("Crawl Complete:       yes\n")
+	} else {
+		fmt.Printf("Crawl Complete:       no (%s)\n", r.results.IncompleteReason)
+	}
+	for _, c := range []struct {
+		label string
+		n     int64
+	}{
+		{"Robots Blocked:", r.results.RobotsBlocked},
+		{"URLs Dropped:", r.results.URLsDropped},
+		{"Abandoned Requests:", r.results.AbandonedRequests},
+	} {
+		if c.n > 0 {
+			fmt.Printf("%-22s%d\n", c.label, c.n)
+		}
+	}
 
 	if len(r.results.Errors) > 0 {
 		fmt.Printf("\n%s\n", strings.Repeat("-", 60))

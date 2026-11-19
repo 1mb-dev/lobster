@@ -36,10 +36,20 @@ type TestResults struct {
 	MaxResponseTime string `json:"max_response_time"`
 	// TotalRequests is the total number of HTTP requests made.
 	TotalRequests int64 `json:"total_requests"`
-	// SuccessfulRequests is the count of requests with 2xx/3xx status codes.
+	// SuccessfulRequests is the count of requests that got a 200-399 status.
 	SuccessfulRequests int64 `json:"successful_requests"`
-	// FailedRequests is the count of requests that failed or returned 4xx/5xx.
+	// FailedRequests is the count of requests with a transport error or a status outside 200-399.
 	FailedRequests int64 `json:"failed_requests"`
+	// AbandonedRequests counts requests the -duration deadline cut off; they are not in TotalRequests.
+	AbandonedRequests int64 `json:"abandoned_requests"`
+	// RobotsBlocked counts discovered URLs robots.txt disallowed; they are not requested.
+	RobotsBlocked int64 `json:"robots_blocked"`
+	// URLsDropped counts discovered URLs the full queue could not take.
+	URLsDropped int64 `json:"urls_dropped"`
+	// CrawlComplete is true when every discovered URL was requested: none pending, dropped or abandoned.
+	CrawlComplete bool `json:"crawl_complete"`
+	// IncompleteReason says why the crawl is incomplete: IncompleteQueueFull or IncompleteDuration.
+	IncompleteReason string `json:"incomplete_reason,omitempty"`
 	// RequestsPerSecond is the average throughput during the test.
 	RequestsPerSecond float64 `json:"requests_per_second"`
 	// SuccessRate is the percentage of successful requests (0-100).
@@ -144,6 +154,12 @@ type PerformanceTargets struct {
 func DefaultPerformanceTargets() PerformanceTargets {
 	return PerformanceTargets{SuccessRate: 99.0}
 }
+
+// IncompleteReason values.
+const (
+	IncompleteQueueFull = "queue_full"
+	IncompleteDuration  = "duration"
+)
 
 // AddURLResult constants for URL addition outcomes.
 const (

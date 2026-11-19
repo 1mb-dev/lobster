@@ -89,9 +89,19 @@ func (c *Crawler) AddURL(rawURL string, depth int, urlQueue chan<- domain.URLTas
 		return domain.AddURLResult{Added: false, Reason: domain.AddURLInvalidHost}
 	}
 
-	// Clean URL (remove fragment, normalize)
+	// Clean URL (remove fragment; an empty path is the root, so the base URL
+	// and a link to "/" are one URL)
 	parsedURL.Fragment = ""
+	if parsedURL.Path == "" {
+		parsedURL.Path = "/"
+	}
 	cleanURL := parsedURL.String()
+
+	// Checked before recording the URL, so a page first seen too deep can
+	// still be queued if it is found again at an allowed depth.
+	if depth > c.maxDepth {
+		return domain.AddURLResult{Added: false, Reason: domain.AddURLDepthExceeded}
+	}
 
 	// Check if already discovered
 	if _, exists := c.discoveredURLs.LoadOrStore(cleanURL, true); exists {
@@ -100,11 +110,6 @@ func (c *Crawler) AddURL(rawURL string, depth int, urlQueue chan<- domain.URLTas
 
 	// Track discovered URL count (O(1) instead of iterating sync.Map)
 	c.discoveredCnt.Add(1)
-
-	// Check depth limit
-	if depth > c.maxDepth {
-		return domain.AddURLResult{Added: false, Reason: domain.AddURLDepthExceeded}
-	}
 
 	// Add to queue
 	select {

@@ -69,16 +69,6 @@ func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 		return nil, fmt.Errorf("rate must be > 0, got %g", config.Rate)
 	}
 
-	// Create token bucket with burst capacity of 2x the rate per second
-	burst := int(config.Rate * 2)
-	if burst < 1 {
-		burst = 1
-	}
-	rateLimiter, err := bucket.NewSafe(bucket.Limit(config.Rate), burst)
-	if err != nil {
-		return nil, fmt.Errorf("creating rate limiter (rate=%.2f): %w", config.Rate, err)
-	}
-
 	// Use configured queue size, default to defaultQueueSize if not set
 	queueSize := config.QueueSize
 	if queueSize <= 0 {
@@ -125,6 +115,17 @@ func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 		}
 	} else {
 		logger.Warn("WARNING: Ignoring robots.txt directives. Please ensure you have permission to test this site!")
+	}
+
+	rate := effectiveRate(config.Rate, robotsParser.GetCrawlDelay())
+	if rate < config.Rate {
+		logger.Info("robots.txt Crawl-delay lowers the rate",
+			"crawl_delay", robotsParser.GetCrawlDelay(), "rate", rate)
+	}
+	// Burst 1: requests are spaced at 1/rate from the first one.
+	rateLimiter, err := bucket.NewSafe(bucket.Limit(rate), 1)
+	if err != nil {
+		return nil, fmt.Errorf("creating rate limiter (rate=%.2f): %w", rate, err)
 	}
 
 	// Size result channels proportionally to avoid backpressure
@@ -195,12 +196,7 @@ func (t *Tester) Run(ctx context.Context) (*domain.TestResults, error) {
 	close(t.slowRequestsCh)
 	aggregatorWg.Wait()
 
-	// Check for dropped URLs and warn user
-	if droppedCount := t.crawler.GetDroppedCount(); droppedCount > 0 {
-		t.logger.Warn("URLs dropped due to queue overflow",
-			"dropped_count", droppedCount,
-			"hint", "Consider increasing --queue-size")
-	}
+	t.recordCompleteness()
 
 	// Calculate final results
 	t.calculateResults(time.Since(startTime))
@@ -336,8 +332,7 @@ func (t *Tester) processURL(ctx context.Context, task domain.URLTask) {
 	// Check robots.txt compliance (unless ignoring)
 	if !t.config.IgnoreRobots && !t.robotsParser.IsAllowed(task.URL) {
 		t.logger.Debug("URL blocked by robots.txt", "url", util.SanitizeURLDefault(task.URL))
-		// Record as skipped, not as an error
-		atomic.AddInt64(&t.results.TotalRequests, 1)
+		atomic.AddInt64(&t.results.RobotsBlocked, 1)
 		return
 	}
 
@@ -347,28 +342,36 @@ func (t *Tester) processURL(ctx context.Context, task domain.URLTask) {
 		return
 	}
 
-	// Apply rate limiting using goflow's token bucket
+	// A wait or request the deadline cuts off touches no request counter.
 	if err := t.rateLimiter.Wait(ctx); err != nil {
-		// Context was canceled or deadline exceeded
-		t.recordError(task.URL, fmt.Sprintf("rate limiter wait canceled: %v", err), task.Depth)
-		atomic.AddInt64(&t.results.FailedRequests, 1)
+		atomic.AddInt64(&t.results.AbandonedRequests, 1)
 		return
 	}
-
-	atomic.AddInt64(&t.results.TotalRequests, 1)
 
 	// Make HTTP request with 429 retry logic
 	resp, responseTime, err := t.makeHTTPRequestWithRetry(ctx, task.URL)
 	if err != nil {
-		t.recordError(task.URL, fmt.Sprintf("making request: %v", err), task.Depth)
+		if ctx.Err() != nil {
+			atomic.AddInt64(&t.results.AbandonedRequests, 1)
+			return
+		}
+		atomic.AddInt64(&t.results.TotalRequests, 1)
 		atomic.AddInt64(&t.results.FailedRequests, 1)
+		t.recordError(task.URL, fmt.Sprintf("making request: %v", err), task.Depth)
 		return
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
 
-	atomic.AddInt64(&t.results.SuccessfulRequests, 1)
+	atomic.AddInt64(&t.results.TotalRequests, 1)
+	ok := resp.StatusCode >= 200 && resp.StatusCode < 400
+	if ok {
+		atomic.AddInt64(&t.results.SuccessfulRequests, 1)
+	} else {
+		atomic.AddInt64(&t.results.FailedRequests, 1)
+		t.recordError(task.URL, fmt.Sprintf("HTTP %d", resp.StatusCode), task.Depth)
+	}
 
 	// Record response time
 	t.recordResponseTime(task.URL, responseTime)
@@ -381,7 +384,7 @@ func (t *Tester) processURL(ctx context.Context, task domain.URLTask) {
 		ContentLength: resp.ContentLength,
 		ContentType:   resp.Header.Get("Content-Type"),
 		Depth:         task.Depth,
-		IsValid:       resp.StatusCode >= 200 && resp.StatusCode < 400,
+		IsValid:       ok,
 	}
 
 	// Discover links if configured
@@ -781,4 +784,28 @@ func (t *Tester) finish() {
 	if t.pending.Add(-1) == 0 {
 		t.doneOnce.Do(func() { close(t.done) })
 	}
+}
+
+// recordCompleteness sets CrawlComplete and IncompleteReason once workers have stopped.
+func (t *Tester) recordCompleteness() {
+	t.results.URLsDropped = int64(t.crawler.GetDroppedCount())
+	switch {
+	case t.results.URLsDropped > 0:
+		t.results.IncompleteReason = domain.IncompleteQueueFull
+		t.logger.Warn("URLs dropped due to queue overflow",
+			"dropped_count", t.results.URLsDropped,
+			"hint", "Increase -queue-size")
+	case t.pending.Load() > 0 || t.results.AbandonedRequests > 0:
+		t.results.IncompleteReason = domain.IncompleteDuration
+	default:
+		t.results.CrawlComplete = true
+	}
+}
+
+// effectiveRate applies robots.txt Crawl-delay as a ceiling: min(rate, 1/delay).
+func effectiveRate(rate float64, crawlDelay time.Duration) float64 {
+	if crawlDelay <= 0 {
+		return rate
+	}
+	return min(rate, 1/crawlDelay.Seconds())
 }
