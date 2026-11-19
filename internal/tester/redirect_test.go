@@ -191,3 +191,14 @@ func TestRedirect_OtherPortSameHostRefused(t *testing.T) {
 		t.Fatalf("Run error = %v, other port hit %d times; want a refusal and no request", err, otherHits.Load())
 	}
 }
+
+func TestRedirect_RefusalHidesQuerySecrets(t *testing.T) {
+	target, _, _ := otherHost(t)
+	base := httptest.NewServer(http.RedirectHandler(target+"?token=s3cr3t-tok", http.StatusFound))
+	defer base.Close()
+
+	_, err := runTester(t, testConfig(base.URL+"/"))
+	if err == nil || strings.Contains(err.Error(), "s3cr3t-tok") {
+		t.Fatalf("Run error = %v; want a refusal without the query token", err)
+	}
+}

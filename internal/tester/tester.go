@@ -314,10 +314,13 @@ func (t *Tester) processURL(ctx context.Context, task domain.URLTask) {
 			atomic.AddInt64(&t.results.AbandonedRequests, 1)
 			return
 		}
-		if task.Depth == 0 && isRefusal(err) {
-			// A refused base URL ends the run with an error, not a failed page.
-			t.baseRefused = err
-			return
+		if refused := refusal(err); refused != nil {
+			if task.Depth == 0 {
+				// A refused base URL ends the run with an error, not a failed page.
+				t.baseRefused = refused
+				return
+			}
+			err = refused
 		}
 		atomic.AddInt64(&t.results.TotalRequests, 1)
 		atomic.AddInt64(&t.results.FailedRequests, 1)

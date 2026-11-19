@@ -42,7 +42,8 @@ func redirectPolicy(base *url.URL, rp *robots.Parser, ignoreRobots bool) func(*h
 			return refuse(fmt.Sprintf("more than %d redirects", maxRedirects))
 		}
 		if !sameOrigin(base, req.URL) {
-			return refuse(fmt.Sprintf("it leaves the base origin %s://%s; to crawl %s, pass it as -url", base.Scheme, base.Host, req.URL.Redacted()))
+			return refuse(fmt.Sprintf("it leaves the base origin %s://%s; to crawl %s://%s, pass it as -url",
+				base.Scheme, base.Host, req.URL.Scheme, req.URL.Host))
 		}
 		if !ignoreRobots && !rp.IsAllowed(req.URL.String()) {
 			return refuse("robots.txt disallows the target")
@@ -76,9 +77,17 @@ func portOf(u *url.URL) string {
 	return "80"
 }
 
-// isRefusal reports whether err is a safety refusal: a blocked dial address or a refused redirect.
-func isRefusal(err error) bool {
+// refusal returns the safety refusal inside err (a blocked dial address or a
+// refused redirect), or nil. Use it in place of err when reporting: the
+// http.Client wrapper around it prints the unsanitized target URL.
+func refusal(err error) error {
 	var blocked *util.BlockedAddressError
+	if errors.As(err, &blocked) {
+		return blocked
+	}
 	var redirect *RedirectRefusedError
-	return errors.As(err, &blocked) || errors.As(err, &redirect)
+	if errors.As(err, &redirect) {
+		return redirect
+	}
+	return nil
 }
