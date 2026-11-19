@@ -8,11 +8,15 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
+	"net/netip"
+	"net/url"
 	"os"
 	"time"
 
 	"github.com/1mb-dev/lobster/v2/internal/cli"
 	"github.com/1mb-dev/lobster/v2/internal/domain"
+	"github.com/1mb-dev/lobster/v2/internal/load"
 	"github.com/1mb-dev/lobster/v2/internal/reporter"
 	"github.com/1mb-dev/lobster/v2/internal/tester"
 	"github.com/1mb-dev/lobster/v2/internal/util"
@@ -45,6 +49,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		noProgress      = fs.Bool("no-progress", false, "Disable progress updates")
 		showVersion     = fs.Bool("version", false, "Show version information")
 		showHelp        = fs.Bool("help", false, "Show help message")
+		iOwnThis        = fs.Bool("i-own-this", false, "Confirm you own the -load target (with LOBSTER_I_OWN_THIS=<host>)")
 	)
 	opts := cli.RegisterConfigFlags(fs)
 	if err := fs.Parse(args); err != nil {
@@ -112,10 +117,31 @@ func run(args []string, stdout, stderr io.Writer) int {
 		NoProgress:         *noProgress,
 	}
 
-	results, err := runCrawl(testerConfig, testDuration, logger)
+	t, err := tester.New(testerConfig, logger)
 	if err != nil {
 		logger.Error("Run failed", "error", err)
 		return exitError
+	}
+
+	// The ownership gate runs before the crawl: a refused load costs only the robots.txt fetch.
+	if cfg.Load != "" {
+		if err = checkLoadGate(cfg.BaseURL, t.CrawlDelay(), *iOwnThis); err != nil {
+			logger.Error("Load refused", "error", err)
+			return exitError
+		}
+	}
+
+	results, err := runCrawl(t, testerConfig, testDuration, logger)
+	if err != nil {
+		logger.Error("Run failed", "error", err)
+		return exitError
+	}
+
+	if cfg.Load != "" {
+		if err = runLoad(t, cfg, results, stderr, logger); err != nil {
+			logger.Error("Load failed", "error", err)
+			return exitError
+		}
 	}
 
 	performanceValidator := validator.New(cfg.PerformanceTargets)
@@ -212,15 +238,10 @@ func checkSafety(cfg *domain.Config, allowPrivateIPs bool, stderr io.Writer, log
 	return exitPass
 }
 
-// runCrawl runs the tester with -duration as the crawl's time ceiling.
-func runCrawl(config domain.TesterConfig, duration time.Duration, logger *slog.Logger) (*domain.TestResults, error) {
+// runCrawl runs the crawl with -duration as its time ceiling.
+func runCrawl(t *tester.Tester, config domain.TesterConfig, duration time.Duration, logger *slog.Logger) (*domain.TestResults, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	defer cancel()
-
-	t, err := tester.New(config, logger)
-	if err != nil {
-		return nil, fmt.Errorf("tester initialization failed: %w", err)
-	}
 
 	logger.Info("Starting crawl",
 		"base_url", util.SanitizeURLDefault(config.BaseURL),
@@ -229,4 +250,55 @@ func runCrawl(config domain.TesterConfig, duration time.Duration, logger *slog.L
 		"max_depth", config.MaxDepth)
 
 	return t.Run(ctx)
+}
+
+// checkLoadGate refuses -load against a public host, or one whose robots.txt
+// sets a Crawl-delay, unless -i-own-this is set and LOBSTER_I_OWN_THIS names the host.
+func checkLoadGate(baseURL string, crawlDelay time.Duration, iOwnThis bool) error {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return err
+	}
+	host := u.Hostname()
+	var addrs []netip.Addr
+	if addr, parseErr := netip.ParseAddr(host); parseErr == nil {
+		addrs = []netip.Addr{addr}
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		addrs, _ = net.DefaultResolver.LookupNetIP(ctx, "ip", host) // unresolved: NeedsAck says yes
+	}
+	return load.CheckAck(load.NeedsAck(addrs, crawlDelay), iOwnThis, os.Getenv(load.AckEnv), host)
+}
+
+// runLoad replays the crawled URLs at -rate for -load, after a complete crawl only.
+func runLoad(t *tester.Tester, cfg *domain.Config, results *domain.TestResults, stderr io.Writer, logger *slog.Logger) error {
+	if !results.CrawlComplete {
+		logger.Warn("Load skipped: the crawl is incomplete")
+		return nil
+	}
+	urls := make([]string, 0, len(results.URLValidations))
+	for _, v := range results.URLValidations {
+		urls = append(urls, v.URL)
+	}
+	duration, _ := time.ParseDuration(cfg.Load) // checked by Validate
+
+	cli.PrintWarningBox(stderr, "LOAD", []string{
+		fmt.Sprintf("Sending %g req/s to %s for %s", cfg.Rate, util.SanitizeURLDefault(cfg.BaseURL), duration),
+		fmt.Sprintf("%d crawled URLs, up to %d requests in flight", len(urls), load.InFlight),
+		fmt.Sprintf("Stops after %d consecutive 429/5xx responses", load.AbortAfter),
+	})
+
+	loadResults, err := load.Run(context.Background(), load.Config{
+		Client:    t.LoadClient(load.InFlight),
+		Requester: t,
+		URLs:      urls,
+		Rate:      cfg.Rate,
+		Duration:  duration,
+	})
+	if err != nil {
+		return err
+	}
+	results.Load = loadResults
+	return nil
 }

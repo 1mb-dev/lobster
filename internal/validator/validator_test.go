@@ -70,9 +70,9 @@ func TestValidateResults_TargetCount(t *testing.T) {
 		want    []string
 	}{
 		{"defaults judge success rate only", domain.DefaultPerformanceTargets(), []string{"Success Rate"}},
-		{"all enabled", all, []string{"Requests per Second", "Average Response Time", "95th Percentile Response Time",
+		{"all enabled; RPS skipped without -load", all, []string{"Average Response Time", "95th Percentile Response Time",
 			"99th Percentile Response Time", "Success Rate"}},
-		{"a 0 target is not judged", p95Off, []string{"Requests per Second", "Average Response Time",
+		{"a 0 target is not judged", p95Off, []string{"Average Response Time",
 			"99th Percentile Response Time", "Success Rate"}},
 		{"all disabled", domain.PerformanceTargets{}, nil},
 	}
@@ -181,5 +181,47 @@ func TestPrintValidationReport(t *testing.T) {
 		v := New(domain.PerformanceTargets{SuccessRate: 99, RequestsPerSecond: math.SmallestNonzeroFloat64})
 		v.ValidateResults(r)
 		v.PrintValidationReport(io.Discard)
+	}
+}
+
+func TestValidateResults_RPSSkippedWithoutLoad(t *testing.T) {
+	v := New(domain.PerformanceTargets{RequestsPerSecond: 1000})
+	v.ValidateResults(results(10, 10))
+	if len(v.targets) != 0 || len(v.skipped) != 1 || !v.Passed() {
+		t.Errorf("targets %v, skipped %v, passed %v; want RPS skipped and the run passing", v.targets, v.skipped, v.Passed())
+	}
+}
+
+// loadResults returns load results with n latencies of 1..n ms, all successful.
+func loadResults(n int, rate float64) *domain.LoadResults {
+	h := stats.NewHistogram()
+	for i := 1; i <= n; i++ {
+		h.Record(time.Duration(i) * time.Millisecond)
+	}
+	return &domain.LoadResults{ResponseTimes: h, Sent: int64(n), Successful: int64(n), AchievedRate: rate}
+}
+
+func TestValidateResults_LoadPhase(t *testing.T) {
+	targets := domain.PerformanceTargets{RequestsPerSecond: 50, P95ResponseTimeMs: 100, SuccessRate: 99}
+	crawl := results(5, 5)
+	crawl.Load = loadResults(100, 49)
+
+	v := New(targets)
+	v.ValidateResults(crawl)
+	got := judged(v)
+	for _, name := range []string{"Crawl Success Rate", "Load Requests per Second", "Load 95th Percentile Response Time", "Load Success Rate"} {
+		if _, ok := got[name]; !ok {
+			t.Errorf("%q not judged; judged %v", name, got)
+		}
+	}
+	if got["Load Requests per Second"].Passed || v.Passed() {
+		t.Error("an achieved rate of 49 against a 50 req/s target should fail the run")
+	}
+
+	crawl.Load = loadResults(100, 50)
+	crawl.Load.Aborted, crawl.Load.AbortReason = true, "10 consecutive 429/5xx responses"
+	v.ValidateResults(crawl)
+	if v.Passed() || v.GetValidationSummary()["load_aborted"] != true {
+		t.Error("an aborted load should fail the run")
 	}
 }

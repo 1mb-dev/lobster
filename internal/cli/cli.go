@@ -8,6 +8,7 @@ package cli
 type ConfigOptions struct {
 	BaseURL            string
 	Duration           string
+	Load               string
 	Timeout            string
 	UserAgent          string
 	OutputFile         string

@@ -62,6 +62,8 @@ type TestResults struct {
 	RequestsPerSecond float64 `json:"requests_per_second"`
 	// SuccessRate is the percentage of successful requests (0-100).
 	SuccessRate float64 `json:"success_rate"`
+	// Load holds the -load phase's results; nil when no load phase ran.
+	Load *LoadResults `json:"load,omitempty"`
 	// URLsDiscovered is the count of unique URLs found during link discovery.
 	// Accessed atomically from multiple goroutines during crawl.
 	URLsDiscovered int64 `json:"urls_discovered"`
@@ -174,4 +176,35 @@ type AddURLResult struct {
 	// Reason explains why the URL was or wasn't added.
 	// Values: "success", "duplicate", "queue_full", "depth_exceeded", "invalid_host", "parse_error"
 	Reason string
+}
+
+// LoadResults are the results of the -load phase: the crawled URLs replayed
+// open-loop at the target rate.
+type LoadResults struct {
+	// ResponseTimes counts latencies measured from each request's intended send time.
+	ResponseTimes *stats.Histogram `json:"response_time_histogram"`
+	// Duration is how long requests were scheduled for.
+	Duration string `json:"duration"`
+	// AbortReason says why the load stopped early; empty when it ran to the end.
+	AbortReason string `json:"abort_reason,omitempty"`
+	// Average, P95 and P99 summarize ResponseTimes.
+	AverageResponseTime string `json:"average_response_time"`
+	P95ResponseTime     string `json:"p95_response_time"`
+	P99ResponseTime     string `json:"p99_response_time"`
+	// TargetRate is the requested rate (-rate), in requests per second.
+	TargetRate float64 `json:"target_rate"`
+	// AchievedRate is requests sent divided by Duration.
+	AchievedRate float64 `json:"achieved_rate"`
+	// SuccessRate is the percentage of sent requests that got a 200-399 status.
+	SuccessRate float64 `json:"success_rate"`
+	// Sent counts requests sent.
+	Sent int64 `json:"requests_sent"`
+	// Successful counts requests that got a 200-399 status.
+	Successful int64 `json:"successful_requests"`
+	// Failed counts requests with a transport error or a status outside 200-399.
+	Failed int64 `json:"failed_requests"`
+	// Late counts requests that waited for an in-flight slot past their intended send time.
+	Late int64 `json:"late"`
+	// Aborted is true when consecutive 429/5xx responses stopped the load.
+	Aborted bool `json:"load_aborted"`
 }

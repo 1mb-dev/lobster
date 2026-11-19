@@ -55,6 +55,9 @@ func TestLoadConfiguration_Flags(t *testing.T) {
 		{name: "concurrency 0 refused", args: []string{"-concurrency", "0"}, wantErr: "concurrency"},
 		{name: "duration 0 refused", args: []string{"-duration", "0s"}, wantErr: "duration"},
 		{name: "negative duration refused", args: []string{"-duration", "-5s"}, wantErr: "duration"},
+		{name: "load 0 refused", args: []string{"-load", "0s"}, wantErr: "load must be > 0"},
+		{name: "rate above the load ceiling refused", args: []string{"-load", "10s", "-rate", "1001"}, wantErr: "1000"},
+		{name: "rate above 1000 without -load accepted", args: []string{"-rate", "1001"}, check: func(c *domain.Config) bool { return c.Rate == 1001 }},
 		{name: "max-depth 0 kept", args: []string{"-max-depth", "0"}, check: func(c *domain.Config) bool { return c.MaxDepth == 0 }},
 		{name: "flags override defaults", args: []string{"-url", "http://custom.example.com", "-concurrency", "25", "-duration", "10m", "-rate", "15"},
 			check: func(c *domain.Config) bool {

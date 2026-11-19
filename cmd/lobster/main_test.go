@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -125,37 +126,49 @@ func jsonKeys(prefix string, v any, out *[]string) {
 }
 
 func TestRun_JSONKeysMatchGolden(t *testing.T) {
-	output := filepath.Join(t.TempDir(), "results.json")
-	var stdout, stderr bytes.Buffer
-	if code := run(local(testSite(t, "/ok", "/missing"), "-output", output), &stdout, &stderr); code != exitFail {
-		t.Fatalf("run = %d, want %d (the 404 fails the run)\n%s", code, exitFail, stderr.String())
+	tests := []struct {
+		golden string
+		extra  []string
+	}{
+		{"results-keys.golden", nil},
+		{"results-load-keys.golden", []string{"-load", "300ms"}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.golden, func(t *testing.T) {
+			output := filepath.Join(t.TempDir(), "results.json")
+			args := local(testSite(t, "/ok", "/missing"), append([]string{"-output", output}, tt.extra...)...)
+			var stdout, stderr bytes.Buffer
+			if code := run(args, &stdout, &stderr); code != exitFail {
+				t.Fatalf("run = %d, want %d (the 404 fails the run)\n%s", code, exitFail, stderr.String())
+			}
 
-	data, err := os.ReadFile(output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc any
-	if err = json.Unmarshal(data, &doc); err != nil {
-		t.Fatal(err)
-	}
-	var keys []string
-	jsonKeys("", doc, &keys)
-	slices.Sort(keys)
-	got := strings.Join(slices.Compact(keys), "\n") + "\n"
+			data, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc any
+			if err = json.Unmarshal(data, &doc); err != nil {
+				t.Fatal(err)
+			}
+			var keys []string
+			jsonKeys("", doc, &keys)
+			slices.Sort(keys)
+			got := strings.Join(slices.Compact(keys), "\n") + "\n"
 
-	golden := filepath.Join("testdata", "results-keys.golden")
-	if *update {
-		if err = os.WriteFile(golden, []byte(got), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	want, err := os.ReadFile(golden)
-	if err != nil {
-		t.Fatalf("%v (run with -update to create it)", err)
-	}
-	if got != string(want) {
-		t.Errorf("JSON keys differ from %s (rerun with -update if the change is intended):\ngot:\n%s\nwant:\n%s", golden, got, want)
+			golden := filepath.Join("testdata", tt.golden)
+			if *update {
+				if err = os.WriteFile(golden, []byte(got), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want, err := os.ReadFile(golden)
+			if err != nil {
+				t.Fatalf("%v (run with -update to create it)", err)
+			}
+			if got != string(want) {
+				t.Errorf("JSON keys differ from %s (rerun with -update if the change is intended):\ngot:\n%s\nwant:\n%s", golden, got, want)
+			}
+		})
 	}
 }
 
@@ -197,5 +210,87 @@ func TestRun_HTMLOnlyWhenAsked(t *testing.T) {
 
 	if code := run(local(url, "-html", filepath.Join(dir, "missing", "r.html")), &stdout, &stderr); code != exitError {
 		t.Errorf("unwritable -html path: run = %d, want %d", code, exitError)
+	}
+}
+
+// crawlDelaySite serves one page and a robots.txt with Crawl-delay: 1; hits counts page requests.
+func crawlDelaySite(t *testing.T, status int) (string, *atomic.Int64) {
+	t.Helper()
+	hits := new(atomic.Int64)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			_, _ = w.Write([]byte("User-agent: *\nCrawl-delay: 1\n"))
+			return
+		}
+		hits.Add(1)
+		w.WriteHeader(status)
+	}))
+	t.Cleanup(server.Close)
+	return server.URL + "/", hits
+}
+
+func TestRun_LoadOwnershipGate(t *testing.T) {
+	tests := []struct {
+		name string
+		flag bool
+		env  string
+		want int
+	}{
+		{"no acknowledgement", false, "", exitError},
+		{"flag without env", true, "", exitError},
+		{"env naming another host", true, "example.com", exitError},
+		{"flag and matching env", true, "127.0.0.1", exitPass},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url, hits := crawlDelaySite(t, http.StatusOK)
+			t.Setenv("LOBSTER_I_OWN_THIS", tt.env)
+			args := []string{"-url", url, "-allow-private-ips", "-no-progress", "-rate", "20", "-duration", "10s", "-load", "1s"}
+			if tt.flag {
+				args = append(args, "-i-own-this")
+			}
+			var stdout, stderr bytes.Buffer
+			if got := run(args, &stdout, &stderr); got != tt.want {
+				t.Fatalf("run = %d, want %d\n%s", got, tt.want, stderr.String())
+			}
+			if tt.want == exitError && hits.Load() != 0 {
+				t.Errorf("a refused load still crawled: %d page requests", hits.Load())
+			}
+			if tt.want == exitPass && !strings.Contains(stdout.String(), "LOAD PHASE") {
+				t.Errorf("no load section in the output:\n%s", stdout.String())
+			}
+		})
+	}
+}
+
+func TestRun_LoadAbortExits1(t *testing.T) {
+	// The crawl's one page request gets 200; every load request after it gets 503.
+	var pageHits atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/robots.txt" {
+			http.NotFound(w, r)
+			return
+		}
+		if pageHits.Add(1) > 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+	}))
+	defer server.Close()
+	output := filepath.Join(t.TempDir(), "r.json")
+
+	var stdout, stderr bytes.Buffer
+	start := time.Now()
+	if got := run(local(server.URL+"/", "-load", "5s", "-output", output), &stdout, &stderr); got != exitFail {
+		t.Fatalf("run = %d, want %d\n%s", got, exitFail, stderr.String())
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Errorf("run took %v; the load should abort early", time.Since(start))
+	}
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"load_aborted": true`) {
+		t.Errorf("JSON has no load_aborted: true:\n%s", data)
 	}
 }

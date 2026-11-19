@@ -6,8 +6,13 @@ import (
 	"time"
 )
 
-// MinRate is the lowest accepted rate, in requests per second.
-const MinRate = 0.1
+// Rate limits, in requests per second.
+const (
+	// MinRate is the lowest accepted rate.
+	MinRate = 0.1
+	// MaxLoadRate is the highest rate a -load run accepts.
+	MaxLoadRate = 1000
+)
 
 // AuthConfig represents authentication configuration for HTTP requests.
 // Supports basic auth, bearer tokens, cookies, and custom headers.
@@ -38,8 +43,10 @@ type Config struct {
 	Auth *AuthConfig `json:"auth,omitempty"`
 	// BaseURL is the starting URL for the stress test (required).
 	BaseURL string `json:"base_url"`
-	// Duration is the test duration as a Go duration string (e.g., "2m", "30s").
+	// Duration is the crawl's time ceiling as a Go duration string (e.g., "2m", "30s").
 	Duration string `json:"duration"`
+	// Load is how long the -load phase replays the crawled URLs; empty means no load phase.
+	Load string `json:"load"`
 	// Timeout is the HTTP request timeout as a Go duration string.
 	Timeout string `json:"timeout"`
 	// UserAgent is the User-Agent header sent with each request.
@@ -139,6 +146,15 @@ func (c *Config) Validate() error {
 
 	if err := positiveDuration("timeout", c.Timeout); err != nil {
 		return err
+	}
+
+	if c.Load != "" {
+		if err := positiveDuration("load", c.Load); err != nil {
+			return err
+		}
+		if c.Rate > MaxLoadRate {
+			return fmt.Errorf("rate above %d req/s is refused with -load, got %g", MaxLoadRate, c.Rate)
+		}
 	}
 
 	if err := c.PerformanceTargets.Validate(); err != nil {

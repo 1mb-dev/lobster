@@ -15,7 +15,8 @@ func RegisterConfigFlags(fs *flag.FlagSet) *ConfigOptions {
 	o := &ConfigOptions{}
 	fs.StringVar(&o.BaseURL, "url", "", "Base URL to test")
 	fs.IntVar(&o.Concurrency, "concurrency", 0, "Number of concurrent workers")
-	fs.StringVar(&o.Duration, "duration", "", "Test duration (e.g., 30s, 5m, 1h)")
+	fs.StringVar(&o.Duration, "duration", "", "Time limit for the crawl (e.g., 30s, 5m, 1h)")
+	fs.StringVar(&o.Load, "load", "", "After a complete crawl, replay the crawled URLs at -rate for this long")
 	fs.StringVar(&o.Timeout, "timeout", "", "Request timeout")
 	fs.Float64Var(&o.Rate, "rate", 0, "Requests per second, shared by all workers")
 	fs.StringVar(&o.UserAgent, "user-agent", "", "User agent string")
@@ -74,6 +75,7 @@ func flagSetters(cfg *domain.Config, o *ConfigOptions) map[string]func() {
 		"url":                  func() { cfg.BaseURL = o.BaseURL },
 		"concurrency":          func() { cfg.Concurrency = o.Concurrency },
 		"duration":             func() { cfg.Duration = o.Duration },
+		"load":                 func() { cfg.Load = o.Load },
 		"timeout":              func() { cfg.Timeout = o.Timeout },
 		"rate":                 func() { cfg.Rate = o.Rate },
 		"user-agent":           func() { cfg.UserAgent = o.UserAgent },

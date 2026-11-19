@@ -14,7 +14,9 @@
 .p99_response_time
 .performance_validation
 .performance_validation.crawl_complete
+.performance_validation.load_aborted
 .performance_validation.overall_status
+.performance_validation.skipped
 .performance_validation.targets
 .performance_validation.targets[].actual
 .performance_validation.targets[].description

@@ -142,6 +142,7 @@ func (r *Reporter) PrintSummary(w io.Writer) {
 	fmt.Fprintf(w, "Average Response Time: %s\n", r.results.AverageResponseTime)
 	fmt.Fprintf(w, "Min Response Time:    %s\n", r.results.MinResponseTime)
 	fmt.Fprintf(w, "Max Response Time:    %s\n", r.results.MaxResponseTime)
+	fmt.Fprintf(w, "p95 / p99:            %s / %s\n", r.results.P95ResponseTime, r.results.P99ResponseTime)
 	fmt.Fprintf(w, "Requests/Second:      %.2f\n", r.results.RequestsPerSecond)
 	fmt.Fprintf(w, "Success Rate:         %.2f%%\n", r.results.SuccessRate)
 	if r.results.CrawlComplete {
@@ -160,6 +161,10 @@ func (r *Reporter) PrintSummary(w io.Writer) {
 		if c.n > 0 {
 			fmt.Fprintf(w, "%-22s%d\n", c.label, c.n)
 		}
+	}
+
+	if l := r.results.Load; l != nil {
+		printLoad(w, l)
 	}
 
 	if len(r.results.Errors) > 0 {
@@ -315,4 +320,25 @@ func statusGroupFromCode(status int) string {
 // getHTMLTemplate returns the HTML template string from embedded file
 func (r *Reporter) getHTMLTemplate() string {
 	return reportTemplate
+}
+
+// printLoad prints the -load phase's section of the console summary.
+func printLoad(w io.Writer, l *domain.LoadResults) {
+	fmt.Fprintf(w, "\n%s\n", strings.Repeat("-", 60))
+	fmt.Fprintf(w, "LOAD PHASE\n")
+	fmt.Fprintf(w, "%s\n", strings.Repeat("-", 60))
+	fmt.Fprintf(w, "Duration:             %s\n", l.Duration)
+	fmt.Fprintf(w, "Target Rate:          %.2f req/s\n", l.TargetRate)
+	fmt.Fprintf(w, "Achieved Rate:        %.2f req/s\n", l.AchievedRate)
+	fmt.Fprintf(w, "Requests Sent:        %d\n", l.Sent)
+	fmt.Fprintf(w, "Successful Requests:  %d\n", l.Successful)
+	fmt.Fprintf(w, "Failed Requests:      %d\n", l.Failed)
+	fmt.Fprintf(w, "Late Requests:        %d\n", l.Late)
+	fmt.Fprintf(w, "Success Rate:         %.2f%%\n", l.SuccessRate)
+	fmt.Fprintf(w, "Average Response Time: %s\n", l.AverageResponseTime)
+	fmt.Fprintf(w, "p95 / p99:            %s / %s\n", l.P95ResponseTime, l.P99ResponseTime)
+	fmt.Fprintf(w, "Latency is measured from each request's scheduled send time.\n")
+	if l.Aborted {
+		fmt.Fprintf(w, "Aborted:              %s\n", l.AbortReason)
+	}
 }

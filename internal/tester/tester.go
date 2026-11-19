@@ -55,6 +55,8 @@ type Tester struct {
 	responseTimesCh chan time.Duration
 	slowRequestsCh  chan domain.SlowRequest
 
+	crawlDelay time.Duration
+
 	// baseRefused is set by the base URL's task when the dial check or the
 	// redirect policy refuses it; read after the workers stop.
 	baseRefused error
@@ -82,31 +84,10 @@ func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 		queueSize = defaultQueueSize
 	}
 
-	// Create HTTP Transport with connection pooling for high concurrency
-	// Default net/http Transport has MaxIdleConnsPerHost=2 which bottlenecks parallel requests
-	transport := &http.Transport{
-		// No proxy: a proxy would dial the target itself, bypassing the dial check.
-		Proxy: nil,
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-			Control:   util.DialControl(config.AllowPrivateIPs),
-		}).DialContext,
-		MaxIdleConns:        100,                    // Total pool size across all hosts
-		MaxIdleConnsPerHost: config.Concurrency * 2, // Allow 2x concurrency to handle bursts
-		MaxConnsPerHost:     config.Concurrency * 2, // Limit connections per host
-		IdleConnTimeout:     90 * time.Second,       // Keep idle connections alive
-		DisableCompression:  false,                  // Enable gzip for bandwidth savings
-		ForceAttemptHTTP2:   true,                   // Enable HTTP/2 when available (HTTPS)
-	}
-
-	// Configure TLS if InsecureSkipVerify is enabled
 	if config.InsecureSkipVerify {
 		logger.Warn("INSECURE: TLS certificate verification is disabled. Use only for testing with self-signed certificates!")
-		transport.TLSClientConfig = &tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // Intentionally insecure for testing self-signed certs
-		}
 	}
+	transport := newTransport(config, config.Concurrency*2)
 
 	baseURL, err := url.Parse(config.BaseURL)
 	if err != nil {
@@ -160,6 +141,7 @@ func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 
 	return &Tester{
 		config:          config,
+		crawlDelay:      robotsParser.GetCrawlDelay(),
 		client:          httpClient,
 		urlQueue:        make(chan domain.URLTask, queueSize),
 		results:         &domain.TestResults{URLValidations: make([]domain.URLValidation, 0)},
@@ -439,19 +421,9 @@ func (t *Tester) makeHTTPRequestWithRetry(ctx context.Context, rawURL string) (*
 func (t *Tester) makeHTTPRequest(ctx context.Context, rawURL string) (*http.Response, time.Duration, error) {
 	startTime := time.Now()
 
-	// Create request
-	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, http.NoBody)
+	req, err := t.NewRequest(ctx, rawURL)
 	if err != nil {
-		return nil, 0, fmt.Errorf("creating request: %w", err)
-	}
-
-	// Set headers
-	req.Header.Set("User-Agent", t.config.UserAgent)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-
-	// Apply authentication
-	if err := t.applyAuthentication(req); err != nil {
-		return nil, 0, fmt.Errorf("applying authentication: %w", err)
+		return nil, 0, err
 	}
 
 	// Execute request
@@ -746,4 +718,58 @@ func effectiveRate(rate float64, crawlDelay time.Duration) float64 {
 		return rate
 	}
 	return min(rate, 1/crawlDelay.Seconds())
+}
+
+// newTransport builds the HTTP transport every request goes through: the dial
+// check on each address, no proxy (a proxy would dial the target itself,
+// bypassing the check), and maxConns connections to the host.
+func newTransport(config domain.TesterConfig, maxConns int) *http.Transport {
+	transport := &http.Transport{
+		Proxy: nil,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+			Control:   util.DialControl(config.AllowPrivateIPs),
+		}).DialContext,
+		MaxIdleConns:        max(100, maxConns),
+		MaxIdleConnsPerHost: maxConns,
+		MaxConnsPerHost:     maxConns,
+		IdleConnTimeout:     90 * time.Second,
+		ForceAttemptHTTP2:   true,
+	}
+	if config.InsecureSkipVerify {
+		transport.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true, //nolint:gosec // Intentionally insecure for testing self-signed certs
+		}
+	}
+	return transport
+}
+
+// NewRequest builds a GET for rawURL with the run's user agent and authentication.
+func (t *Tester) NewRequest(ctx context.Context, rawURL string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("User-Agent", t.config.UserAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	if err := t.applyAuthentication(req); err != nil {
+		return nil, fmt.Errorf("applying authentication: %w", err)
+	}
+	return req, nil
+}
+
+// LoadClient returns a client with the crawl's dial check, TLS settings and
+// redirect policy, sized for maxConns concurrent connections.
+func (t *Tester) LoadClient(maxConns int) *http.Client {
+	return &http.Client{
+		Timeout:       t.config.RequestTimeout,
+		Transport:     newTransport(t.config, maxConns),
+		CheckRedirect: t.client.CheckRedirect,
+	}
+}
+
+// CrawlDelay returns the robots.txt Crawl-delay; 0 when there is none or robots.txt is ignored.
+func (t *Tester) CrawlDelay() time.Duration {
+	return t.crawlDelay
 }

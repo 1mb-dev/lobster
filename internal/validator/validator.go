@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
+	"github.com/1mb-dev/lobster/v2/internal/stats"
 )
 
 // Verdicts reported under the overall_status key.
@@ -19,9 +20,11 @@ const (
 // Validator validates test results against performance targets
 type Validator struct {
 	targets          []domain.PerformanceTarget
+	skipped          []string
 	targetConfig     domain.PerformanceTargets
 	crawlComplete    bool
 	incompleteReason string
+	loadAbortReason  string
 }
 
 // New creates a new performance validator
@@ -33,34 +36,60 @@ func New(targets domain.PerformanceTargets) *Validator {
 }
 
 // ValidateResults judges results against each enabled (non-zero) target and
-// records whether the crawl completed.
+// records whether the crawl completed. With a load phase, the targets judge
+// the load and the crawl is judged by completeness and success rate. Without
+// one, the requests-per-second target is skipped: a crawl's rate is set by -rate.
 func (v *Validator) ValidateResults(results *domain.TestResults) {
 	v.targets = make([]domain.PerformanceTarget, 0)
+	v.skipped = nil
 	v.crawlComplete = results.CrawlComplete
 	v.incompleteReason = results.IncompleteReason
-
-	s := results.ResponseTimes.Summary()
+	v.loadAbortReason = ""
 	tc := v.targetConfig
 
-	if tc.RequestsPerSecond > 0 {
-		v.add("Requests per Second",
-			fmt.Sprintf("≥ %.1f req/s", tc.RequestsPerSecond),
-			fmt.Sprintf("%.1f req/s", results.RequestsPerSecond),
-			results.RequestsPerSecond >= tc.RequestsPerSecond)
-	}
-	v.addLatency("Average Response Time", s.Mean, s.Count, tc.AvgResponseTimeMs)
-	v.addLatency("95th Percentile Response Time", s.P95, s.Count, tc.P95ResponseTimeMs)
-	v.addLatency("99th Percentile Response Time", s.P99, s.Count, tc.P99ResponseTimeMs)
-
-	if tc.SuccessRate > 0 {
-		target := fmt.Sprintf("≥ %.1f%%", tc.SuccessRate)
-		if results.TotalRequests == 0 {
-			v.add("Success Rate", target, "no requests", false)
-		} else {
-			rate := float64(results.SuccessfulRequests) / float64(results.TotalRequests) * 100
-			v.add("Success Rate", target, fmt.Sprintf("%.2f%%", rate), rate >= tc.SuccessRate)
+	l := results.Load
+	if l == nil {
+		if tc.RequestsPerSecond > 0 {
+			v.skipped = append(v.skipped, "Requests per Second: judged only on a -load phase")
 		}
+		v.addTargets("", results.ResponseTimes.Summary(), results.TotalRequests, results.SuccessfulRequests)
+		return
 	}
+
+	if l.Aborted {
+		v.loadAbortReason = l.AbortReason
+	}
+	v.addSuccess("Crawl Success Rate", results.TotalRequests, results.SuccessfulRequests)
+	if tc.RequestsPerSecond > 0 {
+		v.add("Load Requests per Second",
+			fmt.Sprintf("≥ %.1f req/s", tc.RequestsPerSecond),
+			fmt.Sprintf("%.1f req/s", l.AchievedRate),
+			l.AchievedRate >= tc.RequestsPerSecond)
+	}
+	v.addTargets("Load ", l.ResponseTimes.Summary(), l.Successful+l.Failed, l.Successful)
+}
+
+// addTargets adds the latency and success-rate targets, their names prefixed.
+func (v *Validator) addTargets(prefix string, s stats.Summary, total, successful int64) {
+	tc := v.targetConfig
+	v.addLatency(prefix+"Average Response Time", s.Mean, s.Count, tc.AvgResponseTimeMs)
+	v.addLatency(prefix+"95th Percentile Response Time", s.P95, s.Count, tc.P95ResponseTimeMs)
+	v.addLatency(prefix+"99th Percentile Response Time", s.P99, s.Count, tc.P99ResponseTimeMs)
+	v.addSuccess(prefix+"Success Rate", total, successful)
+}
+
+// addSuccess adds a minimum success-rate target; with no requests it fails.
+func (v *Validator) addSuccess(name string, total, successful int64) {
+	if v.targetConfig.SuccessRate <= 0 {
+		return
+	}
+	target := fmt.Sprintf("≥ %.1f%%", v.targetConfig.SuccessRate)
+	if total == 0 {
+		v.add(name, target, "no requests", false)
+		return
+	}
+	rate := float64(successful) / float64(total) * 100
+	v.add(name, target, fmt.Sprintf("%.2f%%", rate), rate >= v.targetConfig.SuccessRate)
 }
 
 // addLatency adds a maximum-latency target; with no measured requests it fails.
@@ -87,9 +116,10 @@ func (v *Validator) add(name, target, actual string, passed bool) {
 	})
 }
 
-// Passed reports the verdict: the crawl completed and every enabled target passed.
+// Passed reports the verdict: the crawl completed, a load phase (if any) was
+// not aborted, and every enabled target passed.
 func (v *Validator) Passed() bool {
-	if !v.crawlComplete {
+	if !v.crawlComplete || v.loadAbortReason != "" {
 		return false
 	}
 	for _, target := range v.targets {
@@ -134,11 +164,17 @@ func (v *Validator) PrintValidationReport(w io.Writer) {
 		fmt.Fprintln(w)
 	}
 
+	for _, skipped := range v.skipped {
+		fmt.Fprintf(w, "SKIP %s\n\n", skipped)
+	}
 	if len(v.targets) == 0 {
 		fmt.Fprintln(w, "No performance targets enabled.")
 	}
 	if !v.crawlComplete {
 		fmt.Fprintf(w, "FAIL Crawl incomplete: %s\n", incompleteHint(v.incompleteReason))
+	}
+	if v.loadAbortReason != "" {
+		fmt.Fprintf(w, "FAIL Load aborted: %s\n", v.loadAbortReason)
 	}
 
 	fmt.Fprintf(w, "\nOverall: %s (%d/%d targets met)\n", v.status(), v.targetsMet(), len(v.targets))
@@ -172,6 +208,8 @@ func (v *Validator) GetValidationSummary() map[string]interface{} {
 		"targets_met":    v.targetsMet(),
 		"total_targets":  len(v.targets),
 		"crawl_complete": v.crawlComplete,
+		"load_aborted":   v.loadAbortReason != "",
+		"skipped":        append([]string{}, v.skipped...),
 		"overall_status": v.status(),
 		"targets":        targetDetails,
 	}

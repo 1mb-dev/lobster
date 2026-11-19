@@ -55,6 +55,14 @@ OPTIONS:
     -duration string
         Time limit for the crawl (default: 2m); the run ends sooner when
         every page has been fetched
+    -load string
+        After a complete crawl, replay the crawled URLs at -rate for this
+        long (e.g. 30s): requests go out on schedule whatever the response
+        times, up to 256 in flight; stops after 10 consecutive 429/5xx.
+        A public host, or a robots.txt Crawl-delay, needs -i-own-this and
+        LOBSTER_I_OWN_THIS=<host>. -rate is capped at 1000 with -load.
+    -i-own-this
+        Confirm you own the -load target (with LOBSTER_I_OWN_THIS=<host>)
     -timeout string
         Request timeout (default: 30s)
     -rate float
@@ -121,6 +129,10 @@ EXAMPLES:
     # Faster crawl, with JSON and HTML reports
     lobster -url http://localhost:3000 -allow-private-ips -rate 10 \
         -output results.json -html report.html
+
+    # Crawl, then replay the crawled pages at 50 req/s for 30s
+    LOBSTER_I_OWN_THIS=localhost lobster -url http://localhost:3000 -allow-private-ips \
+        -rate 50 -load 30s -i-own-this
 
     # Use configuration file
     lobster -config myconfig.json
