@@ -37,8 +37,7 @@ func CenterText(text string, width int) string {
 	return strings.Repeat(" ", padding) + text + strings.Repeat(" ", width-len(text)-padding)
 }
 
-// ShowHelpMessage prints the help message to w.
-// The version parameter should be passed from the main package's version variable.
+// ShowHelpMessage prints the help message to w; version is shown as given.
 func ShowHelpMessage(w io.Writer, version string) {
 	fmt.Fprintln(w, `Lobster - crawl a site you own and check each page against performance targets
 
@@ -70,7 +69,7 @@ OPTIONS:
         Minimum 0.1; below 1.0 asks for confirmation on a terminal
         robots.txt Crawl-delay lowers it to 1/delay
     -user-agent string
-        User agent string (default: Lobster/1.0)
+        User agent string (default: lobster/<version>)
     -max-depth int
         Maximum crawl depth; 0 fetches the base page only (default: 3)
     -queue-size int
@@ -180,5 +179,5 @@ DOCUMENTATION:
     Report issues: https://github.com/1mb-dev/lobster/issues
 
 VERSION:
-    Lobster v`+version)
+    Lobster `+version)
 }

@@ -49,7 +49,7 @@ type Config struct {
 	Load string `json:"load"`
 	// Timeout is the HTTP request timeout as a Go duration string.
 	Timeout string `json:"timeout"`
-	// UserAgent is the User-Agent header sent with each request.
+	// UserAgent is the User-Agent header sent with each request; empty means lobster/<version>.
 	UserAgent string `json:"user_agent"`
 	// OutputFile is the path of the JSON results file (none when empty).
 	OutputFile string `json:"output_file"`
@@ -112,7 +112,6 @@ func DefaultConfig() Config {
 		Duration:           "2m",
 		Timeout:            "30s",
 		Rate:               2.0,
-		UserAgent:          "Lobster/1.0",
 		MaxDepth:           3,
 		QueueSize:          10000, // ~80KB per 10K queue (assuming 8 bytes per URLTask)
 		OutputFile:         "",

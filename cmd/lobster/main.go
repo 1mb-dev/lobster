@@ -23,10 +23,6 @@ import (
 	"github.com/1mb-dev/lobster/v2/internal/validator"
 )
 
-// version is set at build time via ldflags: -X main.version=X.Y.Z
-// Default fallback if not set during build
-var version = "dev"
-
 // Exit codes.
 const (
 	exitPass  = 0 // every enabled gate passed
@@ -54,7 +50,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	opts := cli.RegisterConfigFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			cli.ShowHelpMessage(stdout, version)
+			cli.ShowHelpMessage(stdout, displayVersion(currentVersion()))
 			return exitPass
 		}
 		fmt.Fprintln(stderr, "Run 'lobster -help' for usage.")
@@ -72,11 +68,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	logger := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: logLevel}))
 
 	if *showVersion {
-		fmt.Fprintf(stdout, "Lobster v%s\n", version)
+		fmt.Fprintf(stdout, "Lobster %s\n", displayVersion(currentVersion()))
 		return exitPass
 	}
 	if *showHelp {
-		cli.ShowHelpMessage(stdout, version)
+		cli.ShowHelpMessage(stdout, displayVersion(currentVersion()))
 		return exitPass
 	}
 
@@ -86,6 +82,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 			"error", err,
 			"hint", "Check your config file syntax or command-line flags")
 		return exitError
+	}
+
+	if cfg.UserAgent == "" {
+		cfg.UserAgent = userAgent(currentVersion())
 	}
 
 	if confirmErr := cli.ConfirmLowRate(stderr, cfg.Rate); confirmErr != nil {

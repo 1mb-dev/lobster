@@ -23,9 +23,6 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Rate == 0 {
 		t.Error("Expected Rate to be non-zero")
 	}
-	if cfg.UserAgent == "" {
-		t.Error("Expected UserAgent to be set")
-	}
 	if cfg.MaxDepth == 0 {
 		t.Error("Expected MaxDepth to be non-zero")
 	}
@@ -37,7 +34,7 @@ func TestDefaultConfig(t *testing.T) {
 		"Duration":    "2m",
 		"Timeout":     "30s",
 		"Rate":        2.0,
-		"UserAgent":   "Lobster/1.0",
+		"UserAgent":   "",
 		"MaxDepth":    3,
 		"Verbose":     false,
 	}
