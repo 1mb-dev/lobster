@@ -3,230 +3,166 @@ package validator
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
+	"github.com/1mb-dev/lobster/v2/internal/stats"
+)
+
+// Verdicts reported under the overall_status key.
+const (
+	StatusPass = "PASS"
+	StatusFail = "FAIL"
 )
 
 // Validator validates test results against performance targets
 type Validator struct {
 	targets          []domain.PerformanceTarget
 	targetConfig     domain.PerformanceTargets
-	enableComparison bool
-	comparisonTarget string
+	crawlComplete    bool
+	incompleteReason string
 }
 
 // New creates a new performance validator
 func New(targets domain.PerformanceTargets) *Validator {
 	return &Validator{
-		targets:          make([]domain.PerformanceTarget, 0),
-		targetConfig:     targets,
-		enableComparison: false,
+		targets:      make([]domain.PerformanceTarget, 0),
+		targetConfig: targets,
 	}
 }
 
-// NewWithComparison creates a validator with competitive comparison enabled
-func NewWithComparison(targets domain.PerformanceTargets, comparisonTarget string) *Validator {
-	return &Validator{
-		targets:          make([]domain.PerformanceTarget, 0),
-		targetConfig:     targets,
-		enableComparison: true,
-		comparisonTarget: comparisonTarget,
-	}
-}
-
-// ValidateResults validates the test results against performance targets
+// ValidateResults judges results against each enabled (non-zero) target and
+// records whether the crawl completed.
 func (v *Validator) ValidateResults(results *domain.TestResults) {
 	v.targets = make([]domain.PerformanceTarget, 0)
+	v.crawlComplete = results.CrawlComplete
+	v.incompleteReason = results.IncompleteReason
 
-	// Parse response times for calculations
-	responseTimes := make([]time.Duration, len(results.ResponseTimes))
+	times := make([]time.Duration, len(results.ResponseTimes))
 	for i, entry := range results.ResponseTimes {
-		responseTimes[i] = entry.ResponseTime
+		times[i] = entry.ResponseTime
 	}
+	s := stats.Summarize(times)
+	tc := v.targetConfig
 
-	var avgResponseTime, p95ResponseTime, p99ResponseTime time.Duration
-	if len(responseTimes) > 0 {
-		// Calculate average
-		var total time.Duration
-		for _, rt := range responseTimes {
-			total += rt
+	if tc.RequestsPerSecond > 0 {
+		v.add("Requests per Second",
+			fmt.Sprintf("≥ %.1f req/s", tc.RequestsPerSecond),
+			fmt.Sprintf("%.1f req/s", results.RequestsPerSecond),
+			results.RequestsPerSecond >= tc.RequestsPerSecond)
+	}
+	v.addLatency("Average Response Time", s.Mean, s.Count, tc.AvgResponseTimeMs)
+	v.addLatency("95th Percentile Response Time", s.P95, s.Count, tc.P95ResponseTimeMs)
+	v.addLatency("99th Percentile Response Time", s.P99, s.Count, tc.P99ResponseTimeMs)
+
+	if tc.SuccessRate > 0 {
+		target := fmt.Sprintf("≥ %.1f%%", tc.SuccessRate)
+		if results.TotalRequests == 0 {
+			v.add("Success Rate", target, "no requests", false)
+		} else {
+			rate := float64(results.SuccessfulRequests) / float64(results.TotalRequests) * 100
+			v.add("Success Rate", target, fmt.Sprintf("%.2f%%", rate), rate >= tc.SuccessRate)
 		}
-		avgResponseTime = total / time.Duration(len(responseTimes))
-
-		// Calculate percentiles using proper sorting
-		sort.Slice(responseTimes, func(i, j int) bool {
-			return responseTimes[i] < responseTimes[j]
-		})
-
-		p95Index := int(float64(len(responseTimes)) * 0.95)
-		p99Index := int(float64(len(responseTimes)) * 0.99)
-
-		if p95Index >= len(responseTimes) {
-			p95Index = len(responseTimes) - 1
-		}
-		if p99Index >= len(responseTimes) {
-			p99Index = len(responseTimes) - 1
-		}
-
-		p95ResponseTime = responseTimes[p95Index]
-		p99ResponseTime = responseTimes[p99Index]
-	}
-
-	// Throughput validation
-	if v.targetConfig.RequestsPerSecond > 0 {
-		v.targets = append(v.targets, domain.PerformanceTarget{
-			Name:        "Requests per Second",
-			Target:      fmt.Sprintf("≥ %.1f req/s", v.targetConfig.RequestsPerSecond),
-			Actual:      fmt.Sprintf("%.1f req/s", results.RequestsPerSecond),
-			Description: fmt.Sprintf("Target: >%.1f req/s for optimal throughput", v.targetConfig.RequestsPerSecond),
-			Passed:      results.RequestsPerSecond >= v.targetConfig.RequestsPerSecond,
-		})
-	}
-
-	// Average response time
-	if v.targetConfig.AvgResponseTimeMs > 0 {
-		avgMs := float64(avgResponseTime.Nanoseconds()) / 1e6
-		v.targets = append(v.targets, domain.PerformanceTarget{
-			Name:        "Average Response Time",
-			Target:      fmt.Sprintf("< %.1fms", v.targetConfig.AvgResponseTimeMs),
-			Actual:      fmt.Sprintf("%.1fms", avgMs),
-			Description: fmt.Sprintf("Target: <%.1fms for excellent user experience", v.targetConfig.AvgResponseTimeMs),
-			Passed:      avgMs < v.targetConfig.AvgResponseTimeMs,
-		})
-	}
-
-	// 95th percentile response time
-	if v.targetConfig.P95ResponseTimeMs > 0 {
-		p95Ms := float64(p95ResponseTime.Nanoseconds()) / 1e6
-		v.targets = append(v.targets, domain.PerformanceTarget{
-			Name:        "95th Percentile Response Time",
-			Target:      fmt.Sprintf("< %.1fms", v.targetConfig.P95ResponseTimeMs),
-			Actual:      fmt.Sprintf("%.1fms", p95Ms),
-			Description: fmt.Sprintf("Target: <%.1fms for consistent performance", v.targetConfig.P95ResponseTimeMs),
-			Passed:      p95Ms < v.targetConfig.P95ResponseTimeMs,
-		})
-	}
-
-	// 99th percentile response time
-	if v.targetConfig.P99ResponseTimeMs > 0 {
-		p99Ms := float64(p99ResponseTime.Nanoseconds()) / 1e6
-		v.targets = append(v.targets, domain.PerformanceTarget{
-			Name:        "99th Percentile Response Time",
-			Target:      fmt.Sprintf("< %.1fms", v.targetConfig.P99ResponseTimeMs),
-			Actual:      fmt.Sprintf("%.1fms", p99Ms),
-			Description: fmt.Sprintf("Target: <%.1fms even for worst-case scenarios", v.targetConfig.P99ResponseTimeMs),
-			Passed:      p99Ms < v.targetConfig.P99ResponseTimeMs,
-		})
-	}
-
-	// Success rate
-	if v.targetConfig.SuccessRate > 0 {
-		successRate := (float64(results.SuccessfulRequests) / float64(results.TotalRequests)) * 100
-		v.targets = append(v.targets, domain.PerformanceTarget{
-			Name:        "Success Rate",
-			Target:      fmt.Sprintf("> %.1f%%", v.targetConfig.SuccessRate),
-			Actual:      fmt.Sprintf("%.2f%%", successRate),
-			Description: fmt.Sprintf("Target: >%.1f%% successful requests for production readiness", v.targetConfig.SuccessRate),
-			Passed:      successRate > v.targetConfig.SuccessRate,
-		})
-	}
-
-	// Error rate
-	if v.targetConfig.ErrorRate > 0 {
-		errorRate := float64(results.FailedRequests) / float64(results.TotalRequests) * 100
-		v.targets = append(v.targets, domain.PerformanceTarget{
-			Name:        "Error Rate",
-			Target:      fmt.Sprintf("< %.1f%%", v.targetConfig.ErrorRate),
-			Actual:      fmt.Sprintf("%.2f%%", errorRate),
-			Description: fmt.Sprintf("Target: <%.1f%% for production reliability", v.targetConfig.ErrorRate),
-			Passed:      errorRate < v.targetConfig.ErrorRate,
-		})
 	}
 }
 
-// PrintValidationReport prints a detailed performance validation report
+// addLatency adds a maximum-latency target; with no measured requests it fails.
+func (v *Validator) addLatency(name string, actual time.Duration, count int, targetMs float64) {
+	if targetMs <= 0 {
+		return
+	}
+	target := fmt.Sprintf("≤ %.1fms", targetMs)
+	if count == 0 {
+		v.add(name, target, "no requests", false)
+		return
+	}
+	actualMs := float64(actual.Nanoseconds()) / 1e6
+	v.add(name, target, fmt.Sprintf("%.1fms", actualMs), actualMs <= targetMs)
+}
+
+func (v *Validator) add(name, target, actual string, passed bool) {
+	v.targets = append(v.targets, domain.PerformanceTarget{
+		Name:        name,
+		Target:      target,
+		Actual:      actual,
+		Description: "Target: " + target,
+		Passed:      passed,
+	})
+}
+
+// Passed reports the verdict: the crawl completed and every enabled target passed.
+func (v *Validator) Passed() bool {
+	if !v.crawlComplete {
+		return false
+	}
+	for _, target := range v.targets {
+		if !target.Passed {
+			return false
+		}
+	}
+	return true
+}
+
+func (v *Validator) status() string {
+	if v.Passed() {
+		return StatusPass
+	}
+	return StatusFail
+}
+
+func (v *Validator) targetsMet() int {
+	met := 0
+	for _, target := range v.targets {
+		if target.Passed {
+			met++
+		}
+	}
+	return met
+}
+
+// PrintValidationReport prints one PASS or FAIL line per enabled target, the
+// crawl's completeness, and the verdict.
 func (v *Validator) PrintValidationReport() {
 	fmt.Println("\n" + strings.Repeat("=", 60))
 	fmt.Println("PERFORMANCE TARGET VALIDATION")
 	fmt.Println(strings.Repeat("=", 60))
 
-	passed := 0
-	total := len(v.targets)
-
 	for _, target := range v.targets {
-		status := "FAIL"
+		status := StatusFail
 		if target.Passed {
-			status = "PASS"
-			passed++
+			status = StatusPass
 		}
-
 		fmt.Printf("%s %-30s %s\n", status, target.Name+":", target.Actual)
 		fmt.Printf("    %s\n", target.Description)
 		fmt.Println()
 	}
 
-	if total == 0 {
+	if len(v.targets) == 0 {
 		fmt.Println("No performance targets enabled.")
-		return
+	}
+	if !v.crawlComplete {
+		fmt.Printf("FAIL Crawl incomplete: %s\n", incompleteHint(v.incompleteReason))
 	}
 
-	fmt.Printf("Overall: %d/%d targets met (%.1f%%)\n", passed, total, float64(passed)/float64(total)*100)
+	fmt.Printf("\nOverall: %s (%d/%d targets met)\n", v.status(), v.targetsMet(), len(v.targets))
+}
 
-	switch {
-	case passed == total:
-		fmt.Println("ALL PERFORMANCE TARGETS MET! Application is production-ready.")
-	case passed >= total*3/4:
-		fmt.Println("WARNING: Most targets met, but some optimization may be needed.")
+func incompleteHint(reason string) string {
+	switch reason {
+	case domain.IncompleteQueueFull:
+		return "URLs were dropped from a full queue; raise -queue-size"
+	case domain.IncompleteDuration:
+		return "-duration ended before every page was fetched; raise -duration or -rate"
 	default:
-		fmt.Println("Significant performance improvements needed before production.")
-	}
-
-	if v.enableComparison && v.comparisonTarget != "" {
-		v.printCompetitiveAnalysis()
+		return reason
 	}
 }
 
-// printCompetitiveAnalysis prints competitive comparison if enabled
-func (v *Validator) printCompetitiveAnalysis() {
-	fmt.Println("\nCOMPETITIVE ANALYSIS")
-	fmt.Println(strings.Repeat("=", 60))
-
-	// Check if we have performance metrics
-	hasGoodPerf := false
-	hasGoodThroughput := false
-
-	for _, target := range v.targets {
-		if target.Name == "95th Percentile Response Time" && target.Passed {
-			fmt.Printf("Meeting p95 latency targets vs %s\n", v.comparisonTarget)
-			hasGoodPerf = true
-		}
-		if target.Name == "Requests per Second" && target.Passed {
-			fmt.Printf("Meeting throughput targets vs %s\n", v.comparisonTarget)
-			hasGoodThroughput = true
-		}
-	}
-
-	if !hasGoodPerf {
-		fmt.Printf("WARNING: Response times need improvement to match %s\n", v.comparisonTarget)
-	}
-	if !hasGoodThroughput {
-		fmt.Printf("WARNING: Throughput needs improvement to match %s\n", v.comparisonTarget)
-	}
-}
-
-// GetValidationSummary returns a summary of the validation results
+// GetValidationSummary returns the verdict and per-target results for the JSON report.
 func (v *Validator) GetValidationSummary() map[string]interface{} {
-	passed := 0
-	total := len(v.targets)
-
 	targetDetails := make([]map[string]interface{}, len(v.targets))
 	for i, target := range v.targets {
-		if target.Passed {
-			passed++
-		}
 		targetDetails[i] = map[string]interface{}{
 			"name":        target.Name,
 			"target":      target.Target,
@@ -236,28 +172,11 @@ func (v *Validator) GetValidationSummary() map[string]interface{} {
 		}
 	}
 
-	metPct := 0.0
-	if total > 0 {
-		metPct = float64(passed) / float64(total) * 100
-	}
-
 	return map[string]interface{}{
-		"targets_met":    passed,
-		"total_targets":  total,
-		"success_rate":   metPct,
-		"overall_status": v.getOverallStatus(passed, total),
+		"targets_met":    v.targetsMet(),
+		"total_targets":  len(v.targets),
+		"crawl_complete": v.crawlComplete,
+		"overall_status": v.status(),
 		"targets":        targetDetails,
-	}
-}
-
-// getOverallStatus returns the overall validation status
-func (v *Validator) getOverallStatus(passed, total int) string {
-	switch {
-	case passed == total:
-		return "PRODUCTION_READY"
-	case passed >= total*3/4:
-		return "MOSTLY_READY"
-	default:
-		return "NEEDS_IMPROVEMENT"
 	}
 }

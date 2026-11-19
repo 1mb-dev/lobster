@@ -14,7 +14,6 @@
     "avg_response_time_ms": 50,
     "p95_response_time_ms": 100,
     "p99_response_time_ms": 200,
-    "success_rate": 99.0,
-    "error_rate": 1.0
+    "success_rate": 99.0
   }
 }

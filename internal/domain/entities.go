@@ -146,8 +146,6 @@ type PerformanceTargets struct {
 	P99ResponseTimeMs float64 `json:"p99_response_time_ms"`
 	// SuccessRate is the minimum acceptable success percentage (0-100).
 	SuccessRate float64 `json:"success_rate"`
-	// ErrorRate is the maximum acceptable error percentage (0-100).
-	ErrorRate float64 `json:"error_rate"`
 }
 
 // DefaultPerformanceTargets enables only the success-rate target; a target of 0 is disabled.

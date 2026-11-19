@@ -116,6 +116,7 @@ func TestLoadConfiguration_FileErrors(t *testing.T) {
 		{name: "unknown key", path: writeConfig(t, `{"concurency": 5}`), wantErr: "concurency"},
 		{name: "rate 0 in file", path: writeConfig(t, `{"rate": 0}`), wantErr: "MinRate"},
 		{name: "negative target", path: writeConfig(t, `{"performance_targets": {"success_rate": -1}}`), wantErr: "success_rate"},
+		{name: "removed error_rate target", path: writeConfig(t, `{"performance_targets": {"error_rate": 1}}`), wantErr: "error_rate"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

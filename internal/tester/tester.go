@@ -20,6 +20,7 @@ import (
 	"github.com/1mb-dev/lobster/v2/internal/crawler"
 	"github.com/1mb-dev/lobster/v2/internal/domain"
 	"github.com/1mb-dev/lobster/v2/internal/robots"
+	"github.com/1mb-dev/lobster/v2/internal/stats"
 	"github.com/1mb-dev/lobster/v2/internal/util"
 )
 
@@ -732,26 +733,14 @@ func (t *Tester) monitor(ctx context.Context, startTime time.Time) {
 func (t *Tester) calculateResults(duration time.Duration) {
 	t.results.Duration = duration.String()
 
-	// Calculate response time statistics
 	responseTimes := make([]time.Duration, len(t.results.ResponseTimes))
 	for i, entry := range t.results.ResponseTimes {
 		responseTimes[i] = entry.ResponseTime
 	}
-
-	if len(responseTimes) > 0 {
-		sort.Slice(responseTimes, func(i, j int) bool {
-			return responseTimes[i] < responseTimes[j]
-		})
-
-		t.results.MinResponseTime = responseTimes[0].String()
-		t.results.MaxResponseTime = responseTimes[len(responseTimes)-1].String()
-
-		// Calculate average
-		var total time.Duration
-		for _, rt := range responseTimes {
-			total += rt
-		}
-		t.results.AverageResponseTime = (total / time.Duration(len(responseTimes))).String()
+	if summary := stats.Summarize(responseTimes); summary.Count > 0 {
+		t.results.MinResponseTime = summary.Min.String()
+		t.results.MaxResponseTime = summary.Max.String()
+		t.results.AverageResponseTime = summary.Mean.String()
 	}
 
 	// Calculate rates

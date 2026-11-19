@@ -121,7 +121,7 @@ func (r *Reporter) GenerateJSON(outputPath string) error {
 // PrintSummary prints a console summary of the results
 func (r *Reporter) PrintSummary() {
 	fmt.Printf("\n%s\n", strings.Repeat("=", 60))
-	fmt.Printf("STRESS TEST RESULTS\n")
+	fmt.Printf("RESULTS\n")
 	fmt.Printf("%s\n", strings.Repeat("=", 60))
 	fmt.Printf("Duration:             %s\n", r.results.Duration)
 	fmt.Printf("URLs Discovered:      %d\n", r.results.URLsDiscovered)

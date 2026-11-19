@@ -37,8 +37,7 @@ func TestLoadFromFile_Success(t *testing.T) {
 			"avg_response_time_ms": 25,
 			"p95_response_time_ms": 50,
 			"p99_response_time_ms": 100,
-			"success_rate": 99.5,
-			"error_rate": 0.5
+			"success_rate": 99.5
 		}
 	}`
 
@@ -140,7 +139,6 @@ func TestSaveToFile_Success(t *testing.T) {
 			P95ResponseTimeMs: 75,
 			P99ResponseTimeMs: 150,
 			SuccessRate:       98.0,
-			ErrorRate:         2.0,
 		},
 	}
 

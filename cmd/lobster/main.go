@@ -30,7 +30,6 @@ func main() {
 		noProgress      = flag.Bool("no-progress", false, "Disable progress updates")
 		showVersion     = flag.Bool("version", false, "Show version information")
 		showHelp        = flag.Bool("help", false, "Show help message")
-		compareAgainst  = flag.String("compare", "", "Compare against target (e.g., 'Ghost', 'WordPress')")
 	)
 	opts := cli.RegisterConfigFlags(flag.CommandLine)
 	flag.Parse()
@@ -175,12 +174,7 @@ func main() {
 	}
 
 	// Create validator
-	var performanceValidator *validator.Validator
-	if *compareAgainst != "" {
-		performanceValidator = validator.NewWithComparison(cfg.PerformanceTargets, *compareAgainst)
-	} else {
-		performanceValidator = validator.New(cfg.PerformanceTargets)
-	}
+	performanceValidator := validator.New(cfg.PerformanceTargets)
 	performanceValidator.ValidateResults(results)
 
 	// Create reporter

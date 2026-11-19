@@ -193,7 +193,6 @@ func (p PerformanceTargets) Validate() error {
 		{"p95_response_time_ms", p.P95ResponseTimeMs},
 		{"p99_response_time_ms", p.P99ResponseTimeMs},
 		{"success_rate", p.SuccessRate},
-		{"error_rate", p.ErrorRate},
 	}
 	for _, t := range targets {
 		if t.value < 0 {

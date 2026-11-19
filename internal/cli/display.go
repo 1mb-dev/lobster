@@ -93,8 +93,6 @@ OPTIONS:
         Enable verbose logging with structured output
     -no-progress
         Disable real-time progress updates
-    -compare string
-        Compare performance against target (e.g., Ghost, WordPress)
 
 AUTHENTICATION OPTIONS:
     -auth-type string
@@ -130,9 +128,6 @@ EXAMPLES:
 
     # Use configuration file
     lobster -config myconfig.json
-
-    # Compare against competitor
-    lobster -url http://localhost:3000 -compare "Ghost"
 
     # Quick validation test
     lobster -url http://localhost:3000 -duration 30s -concurrency 5
@@ -180,8 +175,7 @@ CONFIGURATION FILE EXAMPLE:
         "avg_response_time_ms": 50,
         "p95_response_time_ms": 100,
         "p99_response_time_ms": 200,
-        "success_rate": 99.0,
-        "error_rate": 1.0
+        "success_rate": 99.0
       }
     }
 

@@ -2,332 +2,54 @@ package validator
 
 import (
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
-	"github.com/1mb-dev/lobster/v2/internal/testutil"
 )
 
-func TestNew(t *testing.T) {
-	targets := domain.PerformanceTargets{
-		RequestsPerSecond: 100,
-		AvgResponseTimeMs: 50,
-		P95ResponseTimeMs: 100,
-		P99ResponseTimeMs: 200,
-		SuccessRate:       99.0,
-		ErrorRate:         1.0,
+// results returns complete-crawl results with response times 1..n ms.
+func results(n int, success int64) *domain.TestResults {
+	r := &domain.TestResults{
+		TotalRequests:      int64(n),
+		SuccessfulRequests: success,
+		FailedRequests:     int64(n) - success,
+		RequestsPerSecond:  10,
+		CrawlComplete:      true,
 	}
-
-	v := New(targets)
-	if v == nil {
-		t.Fatal("Expected non-nil validator")
+	for i := 1; i <= n; i++ {
+		r.ResponseTimes = append(r.ResponseTimes, domain.ResponseTimeEntry{ResponseTime: time.Duration(i) * time.Millisecond})
 	}
-	if v.enableComparison {
-		t.Error("Expected enableComparison to be false")
-	}
-	if v.targetConfig.RequestsPerSecond != 100 {
-		t.Errorf("Expected RequestsPerSecond 100, got %f", v.targetConfig.RequestsPerSecond)
-	}
+	return r
 }
 
-func TestNewWithComparison(t *testing.T) {
-	targets := domain.PerformanceTargets{
-		RequestsPerSecond: 100,
-		AvgResponseTimeMs: 50,
-		P95ResponseTimeMs: 100,
-		P99ResponseTimeMs: 200,
-		SuccessRate:       99.0,
-		ErrorRate:         1.0,
+func judged(v *Validator) map[string]domain.PerformanceTarget {
+	m := make(map[string]domain.PerformanceTarget, len(v.targets))
+	for _, t := range v.targets {
+		m[t.Name] = t
 	}
-
-	v := NewWithComparison(targets, "Ghost")
-	if v == nil {
-		t.Fatal("Expected non-nil validator")
-	}
-	if !v.enableComparison {
-		t.Error("Expected enableComparison to be true")
-	}
-	if v.comparisonTarget != "Ghost" {
-		t.Errorf("Expected comparisonTarget 'Ghost', got '%s'", v.comparisonTarget)
-	}
+	return m
 }
 
-func TestValidateResults_AllPassing(t *testing.T) {
-	targets := domain.PerformanceTargets{
-		RequestsPerSecond: 10,  // Low threshold
-		AvgResponseTimeMs: 100, // High threshold (easier to pass)
-		P95ResponseTimeMs: 200,
-		P99ResponseTimeMs: 300,
-		SuccessRate:       90.0,
-		ErrorRate:         10.0,
+func TestValidateResults_PercentileIsNearestRank(t *testing.T) {
+	v := New(domain.PerformanceTargets{P95ResponseTimeMs: 95, P99ResponseTimeMs: 98.5})
+	v.ValidateResults(results(100, 100))
+
+	got := judged(v)
+	if p95 := got["95th Percentile Response Time"]; p95.Actual != "95.0ms" || !p95.Passed {
+		t.Errorf("p95 of 1..100ms = %s (passed %v), want the 95th value, 95.0ms, passing a 95ms target", p95.Actual, p95.Passed)
 	}
-
-	v := New(targets)
-
-	// Create test results that should pass all targets
-	results := &domain.TestResults{
-		TotalRequests:      100,
-		SuccessfulRequests: 95,
-		FailedRequests:     5,
-		RequestsPerSecond:  20.0, // > 10
-		ResponseTimes: []domain.ResponseTimeEntry{
-			{ResponseTime: 30 * time.Millisecond},
-			{ResponseTime: 40 * time.Millisecond},
-			{ResponseTime: 50 * time.Millisecond},
-			{ResponseTime: 60 * time.Millisecond},
-			{ResponseTime: 70 * time.Millisecond},
-		},
-	}
-
-	v.ValidateResults(results)
-
-	// Check that targets were created
-	if len(v.targets) == 0 {
-		t.Fatal("Expected targets to be populated")
-	}
-
-	// Verify all targets passed
-	for _, target := range v.targets {
-		if !target.Passed {
-			t.Errorf("Expected target '%s' to pass, but it failed. Target: %s, Actual: %s",
-				target.Name, target.Target, target.Actual)
-		}
-	}
-}
-
-func TestValidateResults_AllFailing(t *testing.T) {
-	targets := domain.PerformanceTargets{
-		RequestsPerSecond: 1000, // Very high threshold
-		AvgResponseTimeMs: 1,    // Very low threshold (hard to pass)
-		P95ResponseTimeMs: 2,
-		P99ResponseTimeMs: 3,
-		SuccessRate:       99.9,
-		ErrorRate:         0.1,
-	}
-
-	v := New(targets)
-
-	// Create test results that should fail all targets
-	results := &domain.TestResults{
-		TotalRequests:      100,
-		SuccessfulRequests: 50,
-		FailedRequests:     50,
-		RequestsPerSecond:  5.0, // << 1000
-		ResponseTimes: []domain.ResponseTimeEntry{
-			{ResponseTime: 100 * time.Millisecond},
-			{ResponseTime: 200 * time.Millisecond},
-			{ResponseTime: 300 * time.Millisecond},
-			{ResponseTime: 400 * time.Millisecond},
-			{ResponseTime: 500 * time.Millisecond},
-		},
-	}
-
-	v.ValidateResults(results)
-
-	// Verify all targets failed
-	for _, target := range v.targets {
-		if target.Passed {
-			t.Errorf("Expected target '%s' to fail, but it passed. Target: %s, Actual: %s",
-				target.Name, target.Target, target.Actual)
-		}
-	}
-}
-
-func TestValidateResults_EmptyResponseTimes(t *testing.T) {
-	targets := domain.DefaultPerformanceTargets()
-	v := New(targets)
-
-	results := &domain.TestResults{
-		TotalRequests:      0,
-		SuccessfulRequests: 0,
-		FailedRequests:     0,
-		RequestsPerSecond:  0,
-		ResponseTimes:      []domain.ResponseTimeEntry{}, // Empty
-	}
-
-	// Should not panic with empty response times
-	v.ValidateResults(results)
-
-	if len(v.targets) == 0 {
-		t.Error("Expected targets to be populated even with empty response times")
-	}
-}
-
-func TestValidateResults_PercentilesCalculation(t *testing.T) {
-	targets := domain.PerformanceTargets{
-		RequestsPerSecond: 1,
-		AvgResponseTimeMs: 1000,
-		P95ResponseTimeMs: 1000,
-		P99ResponseTimeMs: 1000,
-		SuccessRate:       50.0,
-		ErrorRate:         50.0,
-	}
-
-	v := New(targets)
-
-	// Create 100 response times to test percentile calculation
-	responseTimes := make([]domain.ResponseTimeEntry, 100)
-	for i := 0; i < 100; i++ {
-		responseTimes[i] = domain.ResponseTimeEntry{
-			ResponseTime: time.Duration(i+1) * time.Millisecond,
-		}
-	}
-
-	results := &domain.TestResults{
-		TotalRequests:      100,
-		SuccessfulRequests: 100,
-		FailedRequests:     0,
-		RequestsPerSecond:  10.0,
-		ResponseTimes:      responseTimes,
-	}
-
-	v.ValidateResults(results)
-
-	// Find P95 and P99 targets
-	var p95Target, p99Target *domain.PerformanceTarget
-	for i := range v.targets {
-		if strings.Contains(v.targets[i].Name, "95th") {
-			p95Target = &v.targets[i]
-		}
-		if strings.Contains(v.targets[i].Name, "99th") {
-			p99Target = &v.targets[i]
-		}
-	}
-
-	if p95Target == nil {
-		t.Fatal("Expected P95 target to exist")
-	}
-	if p99Target == nil {
-		t.Fatal("Expected P99 target to exist")
-	}
-
-	// P95 should be around 95ms (95th value)
-	// P99 should be around 99ms (99th value)
-	// Just verify they're calculated and formatted correctly
-	if !strings.Contains(p95Target.Actual, "ms") {
-		t.Errorf("Expected P95 actual to contain 'ms', got '%s'", p95Target.Actual)
-	}
-	if !strings.Contains(p99Target.Actual, "ms") {
-		t.Errorf("Expected P99 actual to contain 'ms', got '%s'", p99Target.Actual)
-	}
-}
-
-func TestValidateResults_SuccessRate(t *testing.T) {
-	targets := domain.PerformanceTargets{
-		RequestsPerSecond: 1,
-		AvgResponseTimeMs: 1000,
-		P95ResponseTimeMs: 1000,
-		P99ResponseTimeMs: 1000,
-		SuccessRate:       95.0,
-		ErrorRate:         5.0,
-	}
-
-	v := New(targets)
-
-	tests := []struct {
-		name               string
-		totalRequests      int64
-		successfulRequests int64
-		shouldPass         bool
-	}{
-		{"100% success", 100, 100, true},
-		{"95% success (exact)", 100, 95, false}, // > 95%, not >= 95%
-		{"96% success", 100, 96, true},
-		{"94% success", 100, 94, false},
-		{"0% success", 100, 0, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			results := &domain.TestResults{
-				TotalRequests:      tt.totalRequests,
-				SuccessfulRequests: tt.successfulRequests,
-				FailedRequests:     tt.totalRequests - tt.successfulRequests,
-				RequestsPerSecond:  10.0,
-				ResponseTimes: []domain.ResponseTimeEntry{
-					{ResponseTime: 50 * time.Millisecond},
-				},
-			}
-
-			v.ValidateResults(results)
-
-			// Find success rate target
-			var successRateTarget *domain.PerformanceTarget
-			for i := range v.targets {
-				if strings.Contains(v.targets[i].Name, "Success Rate") {
-					successRateTarget = &v.targets[i]
-					break
-				}
-			}
-
-			if successRateTarget == nil {
-				t.Fatal("Expected Success Rate target to exist")
-			}
-
-			if successRateTarget.Passed != tt.shouldPass {
-				t.Errorf("Expected Passed=%v, got %v. Actual: %s",
-					tt.shouldPass, successRateTarget.Passed, successRateTarget.Actual)
-			}
-		})
-	}
-}
-
-func TestGetValidationSummary(t *testing.T) {
-	targets := domain.DefaultPerformanceTargets()
-	v := New(targets)
-
-	results := &domain.TestResults{
-		TotalRequests:      100,
-		SuccessfulRequests: 95,
-		FailedRequests:     5,
-		RequestsPerSecond:  50.0,
-		ResponseTimes: []domain.ResponseTimeEntry{
-			{ResponseTime: 30 * time.Millisecond},
-			{ResponseTime: 40 * time.Millisecond},
-		},
-	}
-
-	v.ValidateResults(results)
-
-	summary := v.GetValidationSummary()
-	if summary == nil {
-		t.Fatal("Expected non-nil summary")
-	}
-
-	// Verify summary contains expected keys (based on actual implementation)
-	if _, ok := summary["targets_met"]; !ok {
-		t.Error("Expected 'targets_met' in summary")
-	}
-	if _, ok := summary["total_targets"]; !ok {
-		t.Error("Expected 'total_targets' in summary")
-	}
-	if _, ok := summary["success_rate"]; !ok {
-		t.Error("Expected 'success_rate' in summary")
-	}
-	if _, ok := summary["overall_status"]; !ok {
-		t.Error("Expected 'overall_status' in summary")
-	}
-	if _, ok := summary["targets"]; !ok {
-		t.Error("Expected 'targets' in summary")
+	if p99 := got["99th Percentile Response Time"]; p99.Actual != "99.0ms" || p99.Passed {
+		t.Errorf("p99 of 1..100ms = %s (passed %v), want 99.0ms, failing a 98.5ms target", p99.Actual, p99.Passed)
 	}
 }
 
 func TestValidateResults_TargetCount(t *testing.T) {
-	results := &domain.TestResults{
-		TotalRequests:      100,
-		SuccessfulRequests: 95,
-		FailedRequests:     5,
-		RequestsPerSecond:  50.0,
-		ResponseTimes: []domain.ResponseTimeEntry{
-			{ResponseTime: 50 * time.Millisecond},
-		},
-	}
-
 	all := domain.PerformanceTargets{
-		RequestsPerSecond: 10, AvgResponseTimeMs: 100, P95ResponseTimeMs: 100,
-		P99ResponseTimeMs: 100, SuccessRate: 90, ErrorRate: 10,
+		RequestsPerSecond: 1, AvgResponseTimeMs: 100, P95ResponseTimeMs: 100,
+		P99ResponseTimeMs: 100, SuccessRate: 90,
 	}
 	p95Off := all
 	p95Off.P95ResponseTimeMs = 0
@@ -339,15 +61,15 @@ func TestValidateResults_TargetCount(t *testing.T) {
 	}{
 		{"defaults judge success rate only", domain.DefaultPerformanceTargets(), []string{"Success Rate"}},
 		{"all enabled", all, []string{"Requests per Second", "Average Response Time", "95th Percentile Response Time",
-			"99th Percentile Response Time", "Success Rate", "Error Rate"}},
+			"99th Percentile Response Time", "Success Rate"}},
 		{"a 0 target is not judged", p95Off, []string{"Requests per Second", "Average Response Time",
-			"99th Percentile Response Time", "Success Rate", "Error Rate"}},
+			"99th Percentile Response Time", "Success Rate"}},
 		{"all disabled", domain.PerformanceTargets{}, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			v := New(tt.targets)
-			v.ValidateResults(results)
+			v.ValidateResults(results(10, 10))
 			var got []string
 			for _, target := range v.targets {
 				got = append(got, target.Name)
@@ -359,252 +81,95 @@ func TestValidateResults_TargetCount(t *testing.T) {
 	}
 }
 
-func TestPrintValidationReport(t *testing.T) {
-	_ = t // Test verifies no panic occurs
-	targets := domain.PerformanceTargets{
-		RequestsPerSecond: 100,
-		AvgResponseTimeMs: 50,
-		P95ResponseTimeMs: 100,
-		P99ResponseTimeMs: 200,
-		SuccessRate:       95.0,
-		ErrorRate:         5.0,
+func TestPassed(t *testing.T) {
+	targets := domain.PerformanceTargets{SuccessRate: 99, P95ResponseTimeMs: 100}
+	incomplete := results(10, 10)
+	incomplete.CrawlComplete = false
+	incomplete.IncompleteReason = domain.IncompleteDuration
+
+	tests := []struct {
+		name    string
+		results *domain.TestResults
+		want    bool
+	}{
+		{"all targets met, crawl complete", results(10, 10), true},
+		{"a target missed", results(10, 9), false},
+		{"all targets met, crawl incomplete", incomplete, false},
+		{"no requests", &domain.TestResults{CrawlComplete: true}, false},
 	}
-	v := New(targets)
-	results := testutil.SampleResults()
-	v.ValidateResults(results)
-	v.PrintValidationReport()
-}
-
-func TestPrintValidationReport_AllPassing(t *testing.T) {
-	_ = t // Test verifies no panic occurs
-	targets := domain.PerformanceTargets{
-		RequestsPerSecond: 10,  // Low target
-		AvgResponseTimeMs: 500, // High target
-		P95ResponseTimeMs: 1000,
-		P99ResponseTimeMs: 2000,
-		SuccessRate:       90.0,
-		ErrorRate:         20.0,
-	}
-	v := New(targets)
-	results := testutil.SampleResults()
-	v.ValidateResults(results)
-	v.PrintValidationReport()
-}
-
-func TestPrintValidationReport_MostPassing(t *testing.T) {
-	_ = t // Test verifies no panic occurs
-	targets := domain.PerformanceTargets{
-		RequestsPerSecond: 50,
-		AvgResponseTimeMs: 100,
-		P95ResponseTimeMs: 200,
-		P99ResponseTimeMs: 400,
-		SuccessRate:       95.0,
-		ErrorRate:         5.0,
-	}
-	v := New(targets)
-	results := testutil.SampleResults()
-	v.ValidateResults(results)
-	v.PrintValidationReport()
-}
-
-func TestPrintValidationReport_WithComparison(t *testing.T) {
-	_ = t // Test verifies no panic occurs
-	targets := domain.PerformanceTargets{
-		RequestsPerSecond: 100,
-		AvgResponseTimeMs: 50,
-		P95ResponseTimeMs: 100,
-		P99ResponseTimeMs: 200,
-		SuccessRate:       95.0,
-		ErrorRate:         5.0,
-	}
-	v := NewWithComparison(targets, "WordPress")
-
-	results := testutil.SampleResults()
-	v.ValidateResults(results)
-
-	// Should print competitive analysis
-	v.PrintValidationReport()
-}
-
-func TestPrintCompetitiveAnalysis_BothPassing(t *testing.T) {
-	_ = t // Test verifies no panic occurs
-	targets := domain.PerformanceTargets{
-		RequestsPerSecond: 10, // Easy targets
-		AvgResponseTimeMs: 500,
-		P95ResponseTimeMs: 1000,
-		P99ResponseTimeMs: 2000,
-		SuccessRate:       90.0,
-		ErrorRate:         20.0,
-	}
-	v := NewWithComparison(targets, "Ghost")
-
-	results := testutil.SampleResults()
-	v.ValidateResults(results)
-
-	// printCompetitiveAnalysis is called by PrintValidationReport
-	v.PrintValidationReport()
-}
-
-func TestPrintCompetitiveAnalysis_BothFailing(t *testing.T) {
-	_ = t // Test verifies no panic occurs
-	targets := domain.PerformanceTargets{
-		RequestsPerSecond: 1000, // Very high targets
-		AvgResponseTimeMs: 1,
-		P95ResponseTimeMs: 2,
-		P99ResponseTimeMs: 5,
-		SuccessRate:       99.9,
-		ErrorRate:         0.1,
-	}
-	v := NewWithComparison(targets, "Custom CMS")
-
-	results := testutil.SampleResults()
-	v.ValidateResults(results)
-
-	// Should show warnings
-	v.PrintValidationReport()
-}
-
-func TestGetOverallStatus_ProductionReady(t *testing.T) {
-	// Set very easy targets so all pass (sample has 0.67 req/s)
-	targets := domain.PerformanceTargets{
-		RequestsPerSecond: 0.5,  // Sample has 0.67
-		AvgResponseTimeMs: 500,  // Sample has ~150ms
-		P95ResponseTimeMs: 1000, // Sample has ~100ms
-		P99ResponseTimeMs: 2000, // Sample has ~100ms
-		SuccessRate:       90.0, // Sample has 95.0%
-		ErrorRate:         20.0, // Sample has 5.0%
-	}
-	v := New(targets)
-
-	results := testutil.SampleResults()
-	v.ValidateResults(results)
-
-	summary := v.GetValidationSummary()
-	status, ok := summary["overall_status"].(string)
-	if !ok {
-		t.Fatal("Expected overall_status to be string")
-	}
-
-	if status != "PRODUCTION_READY" {
-		t.Errorf("Expected PRODUCTION_READY, got %s", status)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := New(targets)
+			v.ValidateResults(tt.results)
+			if got := v.Passed(); got != tt.want {
+				t.Errorf("Passed() = %v, want %v", got, tt.want)
+			}
+			want := StatusFail
+			if tt.want {
+				want = StatusPass
+			}
+			if got := v.GetValidationSummary()["overall_status"]; got != want {
+				t.Errorf("overall_status = %v, want %s", got, want)
+			}
+		})
 	}
 }
 
-func TestGetOverallStatus_MostlyReady(t *testing.T) {
-	targets := domain.PerformanceTargets{
-		RequestsPerSecond: 50,
-		AvgResponseTimeMs: 100,
-		P95ResponseTimeMs: 200,
-		P99ResponseTimeMs: 400,
-		SuccessRate:       95.0,
-		ErrorRate:         5.0,
-	}
-	v := New(targets)
-
-	results := testutil.SampleResults()
-	v.ValidateResults(results)
-
-	summary := v.GetValidationSummary()
-	status, ok := summary["overall_status"].(string)
-	if !ok {
-		t.Fatal("Expected overall_status to be string")
-	}
-
-	// Should be MOSTLY_READY (>= 3/4 targets met)
-	passed, ok := summary["targets_met"].(int)
-	if !ok {
-		t.Fatal("Expected targets_met to be int")
-	}
-	total, ok := summary["total_targets"].(int)
-	if !ok {
-		t.Fatal("Expected total_targets to be int")
-	}
-
-	if passed < total*3/4 {
-		t.Skip("Test setup doesn't result in mostly ready status")
-	}
-
-	if status != "MOSTLY_READY" {
-		t.Errorf("Expected MOSTLY_READY, got %s", status)
+func TestPassed_NoTargetsCompleteCrawl(t *testing.T) {
+	v := New(domain.PerformanceTargets{})
+	v.ValidateResults(results(3, 3))
+	if !v.Passed() {
+		t.Error("a complete crawl with no enabled targets should pass")
 	}
 }
 
-func TestGetOverallStatus_NeedsImprovement(t *testing.T) {
-	targets := domain.PerformanceTargets{
-		RequestsPerSecond: 500, // Very high
-		AvgResponseTimeMs: 10,  // Very low
-		P95ResponseTimeMs: 20,
-		P99ResponseTimeMs: 50,
-		SuccessRate:       99.5,
-		ErrorRate:         0.5,
+func TestValidateResults_ZeroRequests(t *testing.T) {
+	v := New(domain.PerformanceTargets{SuccessRate: 99, AvgResponseTimeMs: 50})
+	v.ValidateResults(&domain.TestResults{CrawlComplete: true})
+
+	for _, target := range v.targets {
+		if target.Passed || strings.Contains(target.Actual, "NaN") {
+			t.Errorf("%s with zero requests: actual %q, passed %v; want a failure without NaN", target.Name, target.Actual, target.Passed)
+		}
 	}
-	v := New(targets)
-
-	results := testutil.SampleResults()
-	v.ValidateResults(results)
-
-	summary := v.GetValidationSummary()
-	status, ok := summary["overall_status"].(string)
-	if !ok {
-		t.Fatal("Expected overall_status to be string")
+	data, err := json.Marshal(v.GetValidationSummary())
+	if err != nil {
+		t.Fatalf("summary does not marshal: %v", err)
 	}
-
-	if status != "NEEDS_IMPROVEMENT" {
-		t.Errorf("Expected NEEDS_IMPROVEMENT, got %s", status)
+	if strings.Contains(string(data), "NaN") {
+		t.Errorf("summary contains NaN: %s", data)
 	}
 }
 
 func TestGetValidationSummary_Structure(t *testing.T) {
-	targets := domain.PerformanceTargets{
-		RequestsPerSecond: 100,
-		AvgResponseTimeMs: 50,
-		P95ResponseTimeMs: 100,
-		P99ResponseTimeMs: 200,
-		SuccessRate:       95.0,
-		ErrorRate:         5.0,
-	}
-	v := New(targets)
-
-	results := testutil.SampleResults()
-	v.ValidateResults(results)
-
+	v := New(domain.PerformanceTargets{SuccessRate: 99})
+	v.ValidateResults(results(10, 10))
 	summary := v.GetValidationSummary()
 
-	// Verify required keys
-	requiredKeys := []string{"targets_met", "total_targets", "success_rate", "overall_status", "targets"}
-	for _, key := range requiredKeys {
+	for _, key := range []string{"targets_met", "total_targets", "crawl_complete", "overall_status", "targets"} {
 		if _, ok := summary[key]; !ok {
-			t.Errorf("Expected key '%s' in summary", key)
+			t.Errorf("summary is missing %q", key)
 		}
 	}
-
-	// Verify targets array structure
-	targetsArray, ok := summary["targets"].([]map[string]interface{})
-	if !ok {
-		t.Fatal("Expected targets to be array of maps")
-	}
-
-	if len(targetsArray) != 6 {
-		t.Errorf("Expected 6 targets, got %d", len(targetsArray))
-	}
-
-	// Verify target structure
-	if len(targetsArray) > 0 {
-		target := targetsArray[0]
-		targetKeys := []string{"name", "target", "actual", "description", "passed"}
-		for _, key := range targetKeys {
-			if _, keyOK := target[key]; !keyOK {
-				t.Errorf("Expected key '%s' in target", key)
-			}
-		}
+	if summary["targets_met"] != 1 || summary["total_targets"] != 1 || summary["crawl_complete"] != true {
+		t.Errorf("summary = %v", summary)
 	}
 }
 
 func TestGetValidationSummary_NoTargets(t *testing.T) {
 	v := New(domain.PerformanceTargets{})
-	v.ValidateResults(&domain.TestResults{TotalRequests: 1, SuccessfulRequests: 1})
+	v.ValidateResults(&domain.TestResults{TotalRequests: 1, SuccessfulRequests: 1, CrawlComplete: true})
 
 	if _, err := json.Marshal(v.GetValidationSummary()); err != nil {
 		t.Fatalf("summary with no targets does not marshal: %v", err)
+	}
+}
+
+func TestPrintValidationReport(t *testing.T) {
+	// Covers the print paths for passing, failing and incomplete runs; output is not asserted.
+	for _, r := range []*domain.TestResults{results(10, 10), results(10, 1), {IncompleteReason: domain.IncompleteQueueFull}} {
+		v := New(domain.PerformanceTargets{SuccessRate: 99, RequestsPerSecond: math.SmallestNonzeroFloat64})
+		v.ValidateResults(r)
+		v.PrintValidationReport()
 	}
 }
