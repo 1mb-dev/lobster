@@ -163,10 +163,6 @@ func (r *Reporter) PrintSummary(w io.Writer) {
 		}
 	}
 
-	if l := r.results.Load; l != nil {
-		printLoad(w, l)
-	}
-
 	if len(r.results.Errors) > 0 {
 		fmt.Fprintf(w, "\n%s\n", strings.Repeat("-", 60))
 		fmt.Fprintf(w, "ERRORS SUMMARY\n")
@@ -202,6 +198,10 @@ func (r *Reporter) PrintSummary(w io.Writer) {
 
 	for status, count := range statusCounts {
 		fmt.Fprintf(w, "HTTP %d: %d URL(s)\n", status, count)
+	}
+
+	if l := r.results.Load; l != nil {
+		printLoad(w, l)
 	}
 	fmt.Fprintf(w, "%s\n\n", strings.Repeat("=", 60))
 }
