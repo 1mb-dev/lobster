@@ -334,6 +334,7 @@ func printLoad(w io.Writer, l *domain.LoadResults) {
 	fmt.Fprintf(w, "Successful Requests:  %d\n", l.Successful)
 	fmt.Fprintf(w, "Failed Requests:      %d\n", l.Failed)
 	fmt.Fprintf(w, "Late Requests:        %d\n", l.Late)
+	fmt.Fprintf(w, "Unsent Requests:      %d\n", l.Unsent)
 	fmt.Fprintf(w, "Success Rate:         %.2f%%\n", l.SuccessRate)
 	fmt.Fprintf(w, "Average Response Time: %s\n", l.AverageResponseTime)
 	fmt.Fprintf(w, "p95 / p99:            %s / %s\n", l.P95ResponseTime, l.P99ResponseTime)

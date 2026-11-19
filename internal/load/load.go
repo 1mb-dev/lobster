@@ -45,6 +45,7 @@ type run struct {
 	failed     atomic.Int64
 	late       atomic.Int64
 	consec     atomic.Int64
+	unsent     int64
 
 	abortOnce   sync.Once
 	abortReason string
@@ -85,7 +86,9 @@ func (r *run) abort(reason string) {
 // request's latency runs from its intended send time, so a slow server shows
 // in the latency instead of lowering the request rate. When all InFlight slots
 // are busy, a request waits for one and is counted late; once a slot frees,
-// requests already due go out at once.
+// requests already due go out at once. Nothing is sent after cfg.Duration:
+// requests still waiting then are counted unsent, and the run ends once the
+// requests in flight finish (within the client's timeout).
 func Run(ctx context.Context, cfg Config) (*domain.LoadResults, error) {
 	if len(cfg.URLs) == 0 {
 		return nil, fmt.Errorf("load: no URLs to replay")
@@ -102,35 +105,37 @@ func Run(ctx context.Context, cfg Config) (*domain.LoadResults, error) {
 
 	start := time.Now()
 	end := start.Add(cfg.Duration)
+	// Nothing is sent after end: a request still waiting for a slot then is unsent.
+	windowCtx, windowCancel := context.WithDeadline(ctx, end)
+	defer windowCancel()
 	timer := time.NewTimer(0)
 	defer timer.Stop()
-	var lastSend time.Time
 
-	for i := 0; ; i++ {
+	due := 0
+	for ; ; due++ {
 		// Request i is due at start + i/rate whatever happened before it: a
 		// token bucket would drop the sends missed while waiting for a slot,
 		// hiding the backlog (coordinated omission).
-		intended := start.Add(time.Duration(float64(i) * float64(time.Second) / cfg.Rate))
+		intended := start.Add(time.Duration(float64(due) * float64(time.Second) / cfg.Rate))
 		if !intended.Before(end) {
 			break
 		}
-		if !sleepUntil(ctx, timer, intended) {
+		if !sleepUntil(windowCtx, timer, intended) {
 			break
 		}
 		select {
 		case slots <- struct{}{}:
 		default:
-			r.late.Add(1)
 			select {
 			case slots <- struct{}{}:
-			case <-ctx.Done():
+				r.late.Add(1)
+			case <-windowCtx.Done():
 			}
 		}
-		if ctx.Err() != nil {
+		if windowCtx.Err() != nil {
 			break
 		}
 
-		lastSend = time.Now()
 		r.sent.Add(1)
 		wg.Add(1)
 		go func(rawURL string, intended time.Time) {
@@ -141,21 +146,30 @@ func Run(ctx context.Context, cfg Config) (*domain.LoadResults, error) {
 				return // cut off by an abort: sent, but neither successful nor failed
 			}
 			r.record(time.Since(intended), status)
-		}(cfg.URLs[i%len(cfg.URLs)], intended)
+		}(cfg.URLs[due%len(cfg.URLs)], intended)
 	}
 	stopped := time.Since(start)
 	wg.Wait() // abortReason is written by request goroutines; read it after they finish
 
-	// On schedule, the last send is due before the end; a sender that fell
-	// behind sends later, and the achieved rate shows it.
 	window := cfg.Duration
 	if r.abortReason != "" {
 		window = stopped
-	} else if behind := lastSend.Sub(start); behind > window {
-		window = behind
+	} else {
+		r.unsent = int64(dueCount(cfg.Rate, cfg.Duration)) - r.sent.Load()
 	}
-
 	return r.results(cfg, window), nil
+}
+
+// dueCount is how many requests the schedule puts before d: those with i/rate < d.
+func dueCount(rate float64, d time.Duration) int {
+	n := int(rate * d.Seconds())
+	for time.Duration(float64(n)*float64(time.Second)/rate) < d {
+		n++
+	}
+	for n > 0 && time.Duration(float64(n-1)*float64(time.Second)/rate) >= d {
+		n--
+	}
+	return n
 }
 
 // sleepUntil waits until t; it reports false if ctx ends first.
@@ -202,6 +216,7 @@ func (r *run) results(cfg Config, scheduled time.Duration) *domain.LoadResults {
 		Successful:          r.successful.Load(),
 		Failed:              r.failed.Load(),
 		Late:                r.late.Load(),
+		Unsent:              r.unsent,
 		Aborted:             r.abortReason != "",
 	}
 	if scheduled > 0 {

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -80,20 +81,74 @@ func TestRun_StallShowsInP99NotInRate(t *testing.T) {
 }
 
 func TestRun_LateWhenSlotsFull(t *testing.T) {
-	client, url := runAgainst(t, func(http.ResponseWriter, *http.Request) { time.Sleep(time.Second) }, 400, time.Second)
+	client, url := runAgainst(t, func(http.ResponseWriter, *http.Request) { time.Sleep(time.Second) }, 400, 1500*time.Millisecond)
 
+	res, err := Run(context.Background(), config(client, url, 400, 1500*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 600 due in 1.5s; 256 slots fill by 0.64s and free from 1.0s, each held 1s:
+	// about 200 go out late between 1.0s and 1.5s, the rest are unsent.
+	if res.Late < 100 || res.Unsent < 50 {
+		t.Errorf("late = %d, unsent = %d; want about 200 and 140", res.Late, res.Unsent)
+	}
+	if res.Sent+res.Unsent != 600 {
+		t.Errorf("sent %d + unsent %d != 600 due", res.Sent, res.Unsent)
+	}
+	// A late request waits at least 0.36s for a slot, then takes 1s.
+	if p99 := res.ResponseTimes.Quantile(99); p99 < 1250*time.Millisecond {
+		t.Errorf("p99 = %v; latency of a late request must include its wait for a slot", p99)
+	}
+}
+
+// Nothing is sent after the -load window, however slow the server: the run
+// ends once the requests in flight finish.
+func TestRun_StopsAtWindow(t *testing.T) {
+	var mu sync.Mutex
+	var lastArrival time.Time
+	client, url := runAgainst(t, func(http.ResponseWriter, *http.Request) {
+		mu.Lock()
+		lastArrival = time.Now()
+		mu.Unlock()
+		time.Sleep(2 * time.Second)
+	}, 400, time.Second)
+
+	start := time.Now()
 	res, err := Run(context.Background(), config(client, url, 400, time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 400 requests, 256 slots, each held 1s: about 144 must wait for a slot.
-	if res.Late < 100 {
-		t.Errorf("late = %d, want about 144 once %d slots are full", res.Late, InFlight)
+	elapsed := time.Since(start)
+	mu.Lock()
+	sentUntil := lastArrival.Sub(start)
+	mu.Unlock()
+	if sentUntil > 1100*time.Millisecond {
+		t.Errorf("a request arrived %v after the start of a 1s load", sentUntil)
 	}
-	// A late request waits about 0.36s for a slot, then takes 1s: its latency
-	// from the intended time is about 1.36s, where service time alone is 1s.
-	if p99 := res.ResponseTimes.Quantile(99); p99 < 1250*time.Millisecond {
-		t.Errorf("p99 = %v; latency of a late request must include its wait for a slot", p99)
+	if elapsed > 3500*time.Millisecond {
+		t.Errorf("Run took %v; want the 1s window plus the 2s in flight", elapsed)
+	}
+	if res.Sent != InFlight || res.Unsent != 400-InFlight {
+		t.Errorf("sent %d, unsent %d; want %d and %d", res.Sent, res.Unsent, InFlight, 400-InFlight)
+	}
+}
+
+func TestDueCount(t *testing.T) {
+	tests := []struct {
+		rate float64
+		d    time.Duration
+		want int
+	}{
+		{100, 3 * time.Second, 300},
+		{400, 1500 * time.Millisecond, 600},
+		{3, time.Second, 3},
+		{0.5, 3 * time.Second, 2}, // due at 0s and 2s
+		{1000, time.Millisecond, 1},
+	}
+	for _, tt := range tests {
+		if got := dueCount(tt.rate, tt.d); got != tt.want {
+			t.Errorf("dueCount(%g, %v) = %d, want %d", tt.rate, tt.d, got, tt.want)
+		}
 	}
 }
 

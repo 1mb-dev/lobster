@@ -18,6 +18,7 @@
 .load.p95_response_time
 .load.p99_response_time
 .load.requests_sent
+.load.requests_unsent
 .load.response_time_histogram
 .load.response_time_histogram.buckets
 .load.response_time_histogram.buckets[].count

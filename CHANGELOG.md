@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `-load <duration>`: after a complete crawl, replays the crawled URLs open-loop at `-rate`, up to 256 in flight, with latency measured from each request's scheduled send time; stops after 10 consecutive 429/5xx responses
+- `-load <duration>`: after a complete crawl, replays the crawled URLs open-loop at `-rate` for that long, up to 256 in flight, with latency measured from each request's scheduled send time; stops early after 10 consecutive 429/5xx responses
 - `-load` ownership gate: a public host, or a robots.txt `Crawl-delay`, needs `-i-own-this` and `LOBSTER_I_OWN_THIS=<host>`
 - `-html <path>` writes the HTML report, with no external scripts
 - `LOBSTER_AUTH_HEADER` and `-auth-header-stdin` supply the `-auth-header` value
