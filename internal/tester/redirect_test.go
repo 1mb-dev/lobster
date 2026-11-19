@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,10 +16,10 @@ import (
 	"github.com/1mb-dev/lobster/v2/internal/util"
 )
 
-// otherHost serves on 127.0.0.1 and returns its URL as http://localhost:<port>,
+// otherHost serves on 127.0.0.1 and returns its URL, target, as http://localhost:<port>,
 // a different hostname from the 127.0.0.1 test servers. hits counts requests;
 // sawHeader is set if a request carried X-Api-Key.
-func otherHost(t *testing.T) (url string, hits *atomic.Int64, sawHeader *atomic.Bool) {
+func otherHost(t *testing.T) (target string, hits *atomic.Int64, sawHeader *atomic.Bool) {
 	t.Helper()
 	hits, sawHeader = new(atomic.Int64), new(atomic.Bool)
 	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
@@ -150,5 +151,43 @@ func TestTransport_NoProxyCheckedDialer(t *testing.T) {
 	transport, ok := tr.client.Transport.(*http.Transport)
 	if !ok || transport.Proxy != nil || transport.DialContext == nil {
 		t.Errorf("crawl transport: %#v; want no proxy and a checked dialer", tr.client.Transport)
+	}
+}
+
+func TestSameOrigin(t *testing.T) {
+	tests := []struct {
+		base, target string
+		want         bool
+	}{
+		{"http://example.com/", "http://example.com/a", true},
+		{"http://example.com/", "http://EXAMPLE.com:80/a", true},
+		{"http://example.com/", "https://example.com/a", true}, // upgrade 80→443
+		{"https://example.com/", "https://example.com:443/a", true},
+		{"https://example.com/", "http://example.com/a", false},       // downgrade
+		{"https://example.com/", "https://example.com:8443/a", false}, // another port
+		{"http://example.com:8080/", "http://example.com/a", false},
+		{"http://example.com:8080/", "https://example.com/a", false}, // not the 80→443 upgrade
+		{"http://example.com/", "http://www.example.com/a", false},
+	}
+	for _, tt := range tests {
+		base, _ := url.Parse(tt.base)
+		target, _ := url.Parse(tt.target)
+		if got := sameOrigin(base, target); got != tt.want {
+			t.Errorf("sameOrigin(%s, %s) = %v, want %v", tt.base, tt.target, got, tt.want)
+		}
+	}
+}
+
+func TestRedirect_OtherPortSameHostRefused(t *testing.T) {
+	var otherHits atomic.Int64
+	other := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { otherHits.Add(1) }))
+	defer other.Close()
+	base := httptest.NewServer(http.RedirectHandler(other.URL+"/", http.StatusFound)) // same 127.0.0.1, another port
+	defer base.Close()
+
+	_, err := runTester(t, testConfig(base.URL+"/"))
+	var refused *RedirectRefusedError
+	if !errors.As(err, &refused) || otherHits.Load() != 0 {
+		t.Fatalf("Run error = %v, other port hit %d times; want a refusal and no request", err, otherHits.Load())
 	}
 }

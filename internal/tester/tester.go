@@ -118,14 +118,14 @@ func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 	httpClient := &http.Client{
 		Timeout:       config.RequestTimeout,
 		Transport:     transport,
-		CheckRedirect: redirectPolicy(baseURL.Hostname(), robotsParser, config.IgnoreRobots),
+		CheckRedirect: redirectPolicy(baseURL, robotsParser, config.IgnoreRobots),
 	}
 
 	// robots.txt is fetched through the same transport, without the robots recheck.
 	robotsParser.SetClient(&http.Client{
 		Timeout:       10 * time.Second,
 		Transport:     transport,
-		CheckRedirect: redirectPolicy(baseURL.Hostname(), robotsParser, true),
+		CheckRedirect: redirectPolicy(baseURL, robotsParser, true),
 	})
 	if !config.IgnoreRobots {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
