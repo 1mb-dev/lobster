@@ -51,6 +51,10 @@ type Tester struct {
 	errorsCh        chan domain.ErrorInfo
 	responseTimesCh chan domain.ResponseTimeEntry
 	slowRequestsCh  chan domain.SlowRequest
+
+	pending  atomic.Int64 // tasks enqueued and not yet finished
+	done     chan struct{}
+	doneOnce sync.Once
 }
 
 // New creates a new stress tester
@@ -144,6 +148,7 @@ func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 		errorsCh:        make(chan domain.ErrorInfo, resultBufferSize),
 		responseTimesCh: make(chan domain.ResponseTimeEntry, resultBufferSize),
 		slowRequestsCh:  make(chan domain.SlowRequest, slowBufferSize),
+		done:            make(chan struct{}),
 	}, nil
 }
 
@@ -163,6 +168,9 @@ func (t *Tester) Run(ctx context.Context) (*domain.TestResults, error) {
 	aggregatorWg.Add(1)
 	go t.aggregator(&aggregatorWg)
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	// Start workers
 	for i := 0; i < t.config.Concurrency; i++ {
 		wg.Add(1)
@@ -170,17 +178,17 @@ func (t *Tester) Run(ctx context.Context) (*domain.TestResults, error) {
 	}
 
 	// Start URL discovery with the base URL
-	t.crawler.AddURL(t.config.BaseURL, 0, t.urlQueue)
+	t.enqueue(t.config.BaseURL, 0)
 	atomic.StoreInt64(&t.results.URLsDiscovered, int64(t.crawler.GetDiscoveredCount()))
 
 	// Start monitoring
 	go t.monitor(ctx, startTime)
 
-	// Wait for context cancellation or completion
-	<-ctx.Done()
-
-	// Close URL queue and wait for workers to finish
-	close(t.urlQueue)
+	select {
+	case <-ctx.Done():
+	case <-t.done:
+	}
+	cancel()
 	wg.Wait()
 
 	// Close result channels and wait for aggregator to finish
@@ -254,11 +262,9 @@ func (t *Tester) worker(ctx context.Context, wg *sync.WaitGroup) {
 
 	for {
 		select {
-		case task, ok := <-t.urlQueue:
-			if !ok {
-				return
-			}
+		case task := <-t.urlQueue:
 			t.processURL(ctx, task)
+			t.finish()
 		case <-ctx.Done():
 			return
 		}
@@ -597,8 +603,7 @@ func (t *Tester) discoverLinksFromResponse(resp *http.Response, task domain.URLT
 	// Extract and queue links
 	links := t.crawler.ExtractLinks(string(body))
 	for _, link := range links {
-		result := t.crawler.AddURL(link, task.Depth+1, t.urlQueue)
-		if result.Added {
+		if t.enqueue(link, task.Depth+1) {
 			atomic.StoreInt64(&t.results.URLsDiscovered, int64(t.crawler.GetDiscoveredCount()))
 		}
 	}
@@ -764,4 +769,21 @@ func (t *Tester) calculateResults(duration time.Duration) {
 	sort.Slice(t.results.SlowRequests, func(i, j int) bool {
 		return t.results.SlowRequests[i].ResponseTime > t.results.SlowRequests[j].ResponseTime
 	})
+}
+
+// enqueue counts a task as pending before it becomes visible to workers.
+func (t *Tester) enqueue(rawURL string, depth int) bool {
+	t.pending.Add(1)
+	if t.crawler.AddURL(rawURL, depth, t.urlQueue).Added {
+		return true
+	}
+	t.finish()
+	return false
+}
+
+// finish marks one task done; the crawl is complete when none are pending.
+func (t *Tester) finish() {
+	if t.pending.Add(-1) == 0 {
+		t.doneOnce.Do(func() { close(t.done) })
+	}
 }

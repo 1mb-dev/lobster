@@ -35,14 +35,9 @@ build:
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
 
-## test: Run all tests (short mode for CI)
+## test: Run all tests under the race detector
 test:
 	@echo "Running tests..."
-	$(GOTEST) -race -short -timeout 60s $(INTERNAL_PACKAGES)
-
-## test-full: Run all tests including slow integration tests
-test-full:
-	@echo "Running full test suite (including integration tests)..."
 	$(GOTEST) -race -timeout 120s $(INTERNAL_PACKAGES)
 
 ## test-verbose: Run tests with verbose output
