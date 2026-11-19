@@ -29,7 +29,6 @@ func testConfig(baseURL string) domain.TesterConfig {
 		Concurrency:    2,
 		RequestTimeout: 5 * time.Second,
 		UserAgent:      "TestAgent/1.0",
-		FollowLinks:    false,
 		MaxDepth:       1,
 		Rate:           1000, // High enough not to slow tests
 		IgnoreRobots:   true, // Skip robots.txt in tests
@@ -243,7 +242,6 @@ func TestDiscoverLinksFromResponse_HTML(t *testing.T) {
 	defer server.Close()
 
 	config := testConfig(server.URL)
-	config.FollowLinks = true
 	config.MaxDepth = 5
 	logger := testLogger()
 
@@ -272,7 +270,7 @@ func TestDiscoverLinksFromResponse_HTML(t *testing.T) {
 }
 
 // testDiscoverLinksScenario is a helper for testing discoverLinksFromResponse scenarios.
-func testDiscoverLinksScenario(t *testing.T, contentType, body string, followLinks bool, maxDepth, taskDepth, expectedLinks int) {
+func testDiscoverLinksScenario(t *testing.T, contentType, body string, maxDepth, taskDepth, expectedLinks int) {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -282,7 +280,6 @@ func testDiscoverLinksScenario(t *testing.T, contentType, body string, followLin
 	defer server.Close()
 
 	config := testConfig(server.URL)
-	config.FollowLinks = followLinks
 	config.MaxDepth = maxDepth
 	logger := testLogger()
 
@@ -306,15 +303,11 @@ func testDiscoverLinksScenario(t *testing.T, contentType, body string, followLin
 }
 
 func TestDiscoverLinksFromResponse_NotHTML(t *testing.T) {
-	testDiscoverLinksScenario(t, "application/json", `{"key": "value"}`, true, 5, 0, 0)
+	testDiscoverLinksScenario(t, "application/json", `{"key": "value"}`, 5, 0, 0)
 }
 
 func TestDiscoverLinksFromResponse_MaxDepthReached(t *testing.T) {
-	testDiscoverLinksScenario(t, "text/html", `<a href="/page">Link</a>`, true, 2, 2, 0)
-}
-
-func TestDiscoverLinksFromResponse_FollowLinksDisabled(t *testing.T) {
-	testDiscoverLinksScenario(t, "text/html", `<a href="/page">Link</a>`, false, 5, 0, 0)
+	testDiscoverLinksScenario(t, "text/html", `<a href="/page">Link</a>`, 2, 2, 0)
 }
 
 func TestRun_BasicWorkflow(t *testing.T) {
@@ -692,11 +685,10 @@ func TestRun_WithRateLimiting(t *testing.T) {
 	defer server.Close()
 
 	config := testConfig(server.URL)
-	config.MaxDepth = 1       // Allow crawling to discover links
-	config.FollowLinks = true // Must follow links to make multiple requests
-	config.Concurrency = 1    // Single worker to test rate limiting properly
-	config.Rate = 1.0         // 1 request per second = 1000ms between requests
-	config.NoProgress = true  // Disable progress output in tests
+	config.MaxDepth = 1      // Allow crawling to discover links
+	config.Concurrency = 1   // Single worker to test rate limiting properly
+	config.Rate = 1.0        // 1 request per second = 1000ms between requests
+	config.NoProgress = true // Disable progress output in tests
 	logger := testLogger()
 
 	tester, err := New(config, logger)
@@ -978,7 +970,6 @@ func TestMakeHTTPRequestWithRetry_429Backoff(t *testing.T) {
 	defer server.Close()
 
 	config := testConfig(server.URL)
-	config.Respect429 = true // Enable 429 retry
 	config.NoProgress = true
 	logger := testLogger()
 
@@ -1036,7 +1027,6 @@ func TestMakeHTTPRequestWithRetry_429MaxRetries(t *testing.T) {
 	defer server.Close()
 
 	config := testConfig(server.URL)
-	config.Respect429 = true
 	config.NoProgress = true
 
 	tester, err := New(config, testLogger())
@@ -1069,7 +1059,6 @@ func TestMakeHTTPRequestWithRetry_ContextCancellation(t *testing.T) {
 	defer server.Close()
 
 	config := testConfig(server.URL)
-	config.Respect429 = true
 	config.NoProgress = true
 
 	tester, err := New(config, testLogger())
@@ -1095,264 +1084,6 @@ func TestMakeHTTPRequestWithRetry_ContextCancellation(t *testing.T) {
 		t.Errorf("Expected at least 1 request before cancellation, got %d", count)
 	}
 }
-
-// TestMakeHTTPRequestWithRetry_Respect429Disabled tests that 429 retry is skipped when disabled
-func TestMakeHTTPRequestWithRetry_Respect429Disabled(t *testing.T) {
-	server, getCount := create429Server()
-	defer server.Close()
-
-	config := testConfig(server.URL)
-	config.Respect429 = false // Disable 429 retry
-	config.NoProgress = true
-
-	tester, err := New(config, testLogger())
-	if err != nil {
-		t.Fatalf("Failed to create tester: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	resp, _, err := tester.makeHTTPRequestWithRetry(ctx, server.URL)
-	if err != nil {
-		t.Fatalf("Expected response, got error: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// Should only make 1 request (no retries)
-	if count := getCount(); count != 1 {
-		t.Errorf("Expected exactly 1 request with Respect429=false, got %d", count)
-	}
-
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Errorf("Expected status 429, got %d", resp.StatusCode)
-	}
-}
-
-// Tests for processDryRun (Task 4.1)
-
-// drainChannels collects results from tester channels into results struct.
-// Must be called after processDryRun to aggregate sent data.
-// Closes channels and drains synchronously to avoid race conditions.
-func drainChannels(tester *Tester) {
-	// Close channels to signal no more data will be sent
-	close(tester.validationsCh)
-	close(tester.errorsCh)
-	close(tester.responseTimesCh)
-	close(tester.slowRequestsCh)
-
-	// Drain channels synchronously (no goroutine = no race)
-	for v := range tester.validationsCh {
-		tester.results.URLValidations = append(tester.results.URLValidations, v)
-	}
-	for e := range tester.errorsCh {
-		tester.results.Errors = append(tester.results.Errors, e)
-	}
-	//nolint:revive // Drain remaining channels to prevent goroutine leaks
-	for range tester.responseTimesCh {
-	}
-	//nolint:revive // Drain remaining channels to prevent goroutine leaks
-	for range tester.slowRequestsCh {
-	}
-}
-
-func TestProcessDryRun_URLDiscovery(t *testing.T) {
-	// Server that returns HTML with links
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(`
-			<html><body>
-				<a href="/page1">Page 1</a>
-				<a href="/page2">Page 2</a>
-			</body></html>
-		`))
-	}))
-	defer server.Close()
-
-	config := testConfig(server.URL)
-	config.DryRun = true
-	config.FollowLinks = true
-	logger := testLogger()
-
-	tester, err := New(config, logger)
-	if err != nil {
-		t.Fatalf("Failed to create tester: %v", err)
-	}
-
-	ctx := context.Background()
-	task := domain.URLTask{URL: server.URL, Depth: 0}
-
-	// Call processDryRun directly
-	tester.processDryRun(ctx, task)
-
-	// Drain channels to collect results
-	drainChannels(tester)
-
-	// Verify TotalRequests incremented
-	if tester.results.TotalRequests != 1 {
-		t.Errorf("Expected TotalRequests=1, got %d", tester.results.TotalRequests)
-	}
-
-	// Verify no failed requests
-	if tester.results.FailedRequests != 0 {
-		t.Errorf("Expected FailedRequests=0, got %d", tester.results.FailedRequests)
-	}
-
-	// Verify validation was recorded
-	if len(tester.results.URLValidations) != 1 {
-		t.Fatalf("Expected 1 validation, got %d", len(tester.results.URLValidations))
-	}
-
-	validation := tester.results.URLValidations[0]
-	if validation.StatusCode != 200 {
-		t.Errorf("Expected status 200, got %d", validation.StatusCode)
-	}
-}
-
-func TestProcessDryRun_AuthenticationApplied(t *testing.T) {
-	var receivedAuth string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedAuth = r.Header.Get("Authorization")
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	config := testConfig(server.URL)
-	config.DryRun = true
-	config.Auth = &domain.AuthConfig{
-		Type:  "bearer",
-		Token: "test-token",
-	}
-	logger := testLogger()
-
-	tester, err := New(config, logger)
-	if err != nil {
-		t.Fatalf("Failed to create tester: %v", err)
-	}
-
-	ctx := context.Background()
-	task := domain.URLTask{URL: server.URL, Depth: 0}
-
-	tester.processDryRun(ctx, task)
-
-	// Verify auth header was applied
-	expectedAuth := "Bearer test-token"
-	if receivedAuth != expectedAuth {
-		t.Errorf("Expected auth header %q, got %q", expectedAuth, receivedAuth)
-	}
-}
-
-func TestProcessDryRun_RequestError(t *testing.T) {
-	// Use a non-routable IP to cause connection failure
-	config := testConfig("http://192.0.2.1:12345") // TEST-NET-1, guaranteed non-routable
-	config.DryRun = true
-	config.RequestTimeout = 100 * time.Millisecond // Short timeout
-	logger := testLogger()
-
-	tester, err := New(config, logger)
-	if err != nil {
-		t.Fatalf("Failed to create tester: %v", err)
-	}
-
-	ctx := context.Background()
-	task := domain.URLTask{URL: config.BaseURL, Depth: 0}
-
-	tester.processDryRun(ctx, task)
-
-	// Drain channels to collect results
-	drainChannels(tester)
-
-	// Verify TotalRequests incremented
-	if tester.results.TotalRequests != 1 {
-		t.Errorf("Expected TotalRequests=1, got %d", tester.results.TotalRequests)
-	}
-
-	// Verify FailedRequests incremented
-	if tester.results.FailedRequests != 1 {
-		t.Errorf("Expected FailedRequests=1, got %d", tester.results.FailedRequests)
-	}
-
-	// Verify error was recorded
-	if len(tester.results.Errors) != 1 {
-		t.Errorf("Expected 1 error, got %d", len(tester.results.Errors))
-	}
-}
-
-func TestProcessDryRun_ContextCancellation(t *testing.T) {
-	// Server that delays response
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(500 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	config := testConfig(server.URL)
-	config.DryRun = true
-	logger := testLogger()
-
-	tester, err := New(config, logger)
-	if err != nil {
-		t.Fatalf("Failed to create tester: %v", err)
-	}
-
-	// Create context that cancels quickly
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-
-	task := domain.URLTask{URL: server.URL, Depth: 0}
-
-	tester.processDryRun(ctx, task)
-
-	// Drain channels to collect results
-	drainChannels(tester)
-
-	// Verify request failed
-	if tester.results.FailedRequests != 1 {
-		t.Errorf("Expected FailedRequests=1 after context cancellation, got %d", tester.results.FailedRequests)
-	}
-}
-
-func TestProcessDryRun_InvalidStatusCode(t *testing.T) {
-	// Server that returns 500 error
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
-
-	config := testConfig(server.URL)
-	config.DryRun = true
-	logger := testLogger()
-
-	tester, err := New(config, logger)
-	if err != nil {
-		t.Fatalf("Failed to create tester: %v", err)
-	}
-
-	ctx := context.Background()
-	task := domain.URLTask{URL: server.URL, Depth: 0}
-
-	tester.processDryRun(ctx, task)
-
-	// Drain channels to collect results
-	drainChannels(tester)
-
-	// Verify validation was recorded with correct status
-	if len(tester.results.URLValidations) != 1 {
-		t.Fatalf("Expected 1 validation, got %d", len(tester.results.URLValidations))
-	}
-
-	validation := tester.results.URLValidations[0]
-	if validation.StatusCode != 500 {
-		t.Errorf("Expected status 500, got %d", validation.StatusCode)
-	}
-
-	// 500 should be marked as invalid
-	if validation.IsValid {
-		t.Error("Expected 500 to be marked as invalid")
-	}
-}
-
-// Test monitor goroutine behavior
 
 func TestMonitor_NoProgressMode(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

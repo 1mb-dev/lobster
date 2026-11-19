@@ -60,7 +60,6 @@ func TestIntegration_FullCrawlWorkflow(t *testing.T) {
 	// Configure for full crawl
 	config := testConfig(server.URL)
 	config.MaxDepth = 2 // Allow 2 levels of crawling
-	config.FollowLinks = true
 	config.NoProgress = true
 	logger := testLogger()
 
@@ -110,55 +109,6 @@ func TestIntegration_FullCrawlWorkflow(t *testing.T) {
 	}
 }
 
-// TestIntegration_DryRunMode verifies dry-run mode discovers links without load testing
-func TestIntegration_DryRunMode(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		if r.URL.Path == "" || r.URL.Path == "/" {
-			_, _ = w.Write([]byte(`<html><body>
-				<a href="/page1">Page 1</a>
-				<a href="/page2">Page 2</a>
-				<a href="/page3">Page 3</a>
-			</body></html>`))
-		} else {
-			_, _ = w.Write([]byte(`<html><body>Page content</body></html>`))
-		}
-	}))
-	defer server.Close()
-
-	config := testConfig(server.URL)
-	config.MaxDepth = 1
-	config.FollowLinks = true
-	config.DryRun = true
-	config.NoProgress = true
-	logger := testLogger()
-
-	tester, err := New(config, logger)
-	if err != nil {
-		t.Fatalf("Failed to create tester: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	results, err := tester.Run(ctx)
-	if err != nil {
-		t.Fatalf("Run failed: %v", err)
-	}
-
-	// Verify URLs were discovered even in dry-run mode
-	if results.URLsDiscovered < 3 {
-		t.Errorf("Expected to discover at least 3 URLs in dry-run, got %d", results.URLsDiscovered)
-	}
-
-	// In dry-run mode, requests are made for discovery but not for load testing
-	// So we should see some requests
-	if results.TotalRequests == 0 {
-		t.Error("Expected some requests in dry-run mode for link discovery")
-	}
-}
-
-// TestIntegration_AuthenticationWorkflow tests end-to-end authentication
 func TestIntegration_AuthenticationWorkflow(t *testing.T) {
 	// Create a server that requires authentication
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +130,6 @@ func TestIntegration_AuthenticationWorkflow(t *testing.T) {
 
 	config := testConfig(server.URL)
 	config.MaxDepth = 1
-	config.FollowLinks = true
 	config.NoProgress = true
 	config.Auth = &domain.AuthConfig{
 		Type:  "bearer",
@@ -242,7 +191,6 @@ func TestIntegration_RobotsTxtCompliance(t *testing.T) {
 
 	config := testConfig(server.URL)
 	config.MaxDepth = 1
-	config.FollowLinks = true
 	config.IgnoreRobots = false // Respect robots.txt
 	config.NoProgress = true
 	logger := testLogger()
@@ -317,7 +265,6 @@ func TestIntegration_ErrorHandlingAndRecovery(t *testing.T) {
 
 	config := testConfig(server.URL)
 	config.MaxDepth = 1
-	config.FollowLinks = true
 	config.NoProgress = true
 	logger := testLogger()
 
@@ -414,7 +361,6 @@ func TestIntegration_ConcurrentCrawling(t *testing.T) {
 
 	config := testConfig(server.URL)
 	config.MaxDepth = 1
-	config.FollowLinks = true
 	config.Concurrency = 3 // Use 3 workers
 	config.NoProgress = true
 	logger := testLogger()
@@ -476,7 +422,6 @@ func TestIntegration_DelayedLinks(t *testing.T) {
 	config := testConfig(server.URL + "/")
 	config.Concurrency = 4
 	config.MaxDepth = 5
-	config.FollowLinks = true
 	config.NoProgress = true
 
 	tester, err := New(config, testLogger())

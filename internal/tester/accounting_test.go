@@ -67,7 +67,6 @@ func crawl(t *testing.T, s *site, path string, ceiling time.Duration, mutate fun
 	t.Cleanup(server.Close)
 
 	config := testConfig(server.URL + path)
-	config.FollowLinks = true
 	config.MaxDepth = 3
 	config.NoProgress = true
 	if mutate != nil {

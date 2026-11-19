@@ -2,6 +2,7 @@ package cli
 
 import (
 	"flag"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,7 +37,7 @@ func TestLoadConfiguration_Defaults(t *testing.T) {
 		t.Fatalf("LoadConfiguration() error = %v", err)
 	}
 	if want := domain.DefaultConfig(); cfg.BaseURL != want.BaseURL || cfg.Concurrency != want.Concurrency ||
-		cfg.Duration != want.Duration || cfg.Rate != want.Rate || cfg.MaxDepth != want.MaxDepth || !cfg.FollowLinks {
+		cfg.Duration != want.Duration || cfg.Rate != want.Rate || cfg.MaxDepth != want.MaxDepth {
 		t.Errorf("defaults not applied: %+v", cfg)
 	}
 }
@@ -59,7 +60,7 @@ func TestLoadConfiguration_Flags(t *testing.T) {
 			check: func(c *domain.Config) bool {
 				return c.BaseURL == "http://custom.example.com" && c.Concurrency == 25 && c.Duration == "10m" && c.Rate == 15
 			}},
-		{name: "bool flag set to false", args: []string{"-follow-links=false"}, check: func(c *domain.Config) bool { return !c.FollowLinks }},
+		{name: "bool flag set", args: []string{"-ignore-robots"}, check: func(c *domain.Config) bool { return c.IgnoreRobots }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -84,7 +85,7 @@ func TestLoadConfiguration_FromFile(t *testing.T) {
 	path := writeConfig(t, `{
 		"base_url": "http://file.example.com",
 		"concurrency": 50,
-		"follow_links": false,
+		"ignore_robots": true,
 		"performance_targets": {"p95_response_time_ms": 0}
 	}`)
 
@@ -95,8 +96,8 @@ func TestLoadConfiguration_FromFile(t *testing.T) {
 	if cfg.BaseURL != "http://file.example.com" || cfg.Concurrency != 50 {
 		t.Errorf("file values not applied: %+v", cfg)
 	}
-	if cfg.FollowLinks {
-		t.Error("follow_links false in the file was overwritten by the flag default")
+	if !cfg.IgnoreRobots {
+		t.Error("ignore_robots true in the file was overwritten by the flag default")
 	}
 	if cfg.Duration != domain.DefaultConfig().Duration {
 		t.Errorf("duration absent from the file: got %q, want the default", cfg.Duration)
@@ -117,6 +118,9 @@ func TestLoadConfiguration_FileErrors(t *testing.T) {
 		{name: "rate 0 in file", path: writeConfig(t, `{"rate": 0}`), wantErr: "MinRate"},
 		{name: "negative target", path: writeConfig(t, `{"performance_targets": {"success_rate": -1}}`), wantErr: "success_rate"},
 		{name: "removed error_rate target", path: writeConfig(t, `{"performance_targets": {"error_rate": 1}}`), wantErr: "error_rate"},
+		{name: "removed follow_links key", path: writeConfig(t, `{"follow_links": true}`), wantErr: "follow_links"},
+		{name: "removed respect_429 key", path: writeConfig(t, `{"respect_429": true}`), wantErr: "respect_429"},
+		{name: "removed dry_run key", path: writeConfig(t, `{"dry_run": false}`), wantErr: "dry_run"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -192,34 +196,64 @@ func TestBuildAuthConfig_MutuallyExclusiveStdin(t *testing.T) {
 }
 
 func TestBuildAuthConfig_Header(t *testing.T) {
-	opts := &ConfigOptions{
-		AuthType:   "header",
-		AuthHeader: "X-API-Key:secret123",
-	}
-	cfg, err := BuildAuthConfig(opts)
+	t.Setenv("LOBSTER_AUTH_HEADER", "secret123")
+
+	cfg, err := BuildAuthConfig(&ConfigOptions{AuthType: "header", AuthHeader: "X-API-Key"})
 	if err != nil {
 		t.Fatalf("BuildAuthConfig() error = %v", err)
 	}
-
-	if cfg == nil {
-		t.Fatal("Expected non-nil config")
-	}
-	if cfg.Headers == nil {
-		t.Fatal("Expected non-nil Headers map")
-	}
-	if cfg.Headers["X-API-Key"] != "secret123" {
-		t.Errorf("Expected header value 'secret123', got '%s'", cfg.Headers["X-API-Key"])
+	if cfg == nil || cfg.Headers["X-API-Key"] != "secret123" {
+		t.Fatalf("header not built from LOBSTER_AUTH_HEADER: %+v", cfg)
 	}
 }
 
-func TestBuildAuthConfig_InvalidHeader(t *testing.T) {
-	opts := &ConfigOptions{
-		AuthType:   "header",
-		AuthHeader: "invalid-no-colon",
+func TestBuildAuthConfig_HeaderErrors(t *testing.T) {
+	const secret = "s3cr3t-value"
+	tests := []struct {
+		name    string
+		env     string
+		opts    ConfigOptions
+		wantErr string
+	}{
+		{name: "Name:Value refused", env: "x", opts: ConfigOptions{AuthHeader: "X-API-Key:" + secret}, wantErr: "header name only"},
+		{name: "name without a value", opts: ConfigOptions{AuthHeader: "X-API-Key"}, wantErr: "needs a value"},
+		{name: "secret passed as the name", opts: ConfigOptions{AuthHeader: secret}, wantErr: "needs a value"},
+		{name: "stdin without a name", opts: ConfigOptions{AuthHeaderStdin: true}, wantErr: "needs -auth-header"},
+		{name: "two stdin flags", opts: ConfigOptions{AuthHeader: "X-API-Key", AuthHeaderStdin: true, AuthTokenStdin: true}, wantErr: "mutually exclusive"},
 	}
-	_, err := BuildAuthConfig(opts)
-	if err == nil {
-		t.Error("Expected error for invalid header format")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("LOBSTER_AUTH_HEADER", tt.env)
+			_, err := BuildAuthConfig(&tt.opts)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want one containing %q", err, tt.wantErr)
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("error echoes the flag's text: %v", err)
+			}
+		})
+	}
+}
+
+func TestRemovedFlags(t *testing.T) {
+	for _, name := range []string{"-dry-run", "-follow-links", "-respect-429"} {
+		fs := flag.NewFlagSet("lobster", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		RegisterConfigFlags(fs)
+		if err := fs.Parse([]string{name}); err == nil {
+			t.Errorf("%s parsed; it was removed", name)
+		}
+	}
+}
+
+func TestExampleConfigLoads(t *testing.T) {
+	cfg, err := load(t, filepath.Join("..", "..", "examples", "config.example.json"))
+	if err != nil {
+		t.Fatalf("examples/config.example.json: %v", err)
+	}
+	want := domain.PerformanceTargets{SuccessRate: 99}
+	if cfg.PerformanceTargets != want {
+		t.Errorf("example targets = %+v, want success rate only", cfg.PerformanceTargets)
 	}
 }
 

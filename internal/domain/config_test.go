@@ -39,7 +39,6 @@ func TestDefaultConfig(t *testing.T) {
 		"Rate":        2.0,
 		"UserAgent":   "Lobster/1.0",
 		"MaxDepth":    3,
-		"FollowLinks": true,
 		"Verbose":     false,
 	}
 
@@ -63,9 +62,6 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.MaxDepth != expectedDefaults["MaxDepth"] {
 		t.Errorf("Expected MaxDepth %v, got %v", expectedDefaults["MaxDepth"], cfg.MaxDepth)
-	}
-	if cfg.FollowLinks != expectedDefaults["FollowLinks"] {
-		t.Errorf("Expected FollowLinks %v, got %v", expectedDefaults["FollowLinks"], cfg.FollowLinks)
 	}
 	if cfg.Verbose != expectedDefaults["Verbose"] {
 		t.Errorf("Expected Verbose %v, got %v", expectedDefaults["Verbose"], cfg.Verbose)

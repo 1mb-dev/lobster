@@ -15,9 +15,6 @@ type ConfigOptions struct {
 	Concurrency        int
 	MaxDepth           int
 	QueueSize          int
-	FollowLinks        bool
-	Respect429         bool
-	DryRun             bool
 	Verbose            bool
 	InsecureSkipVerify bool
 	IgnoreRobots       bool
@@ -26,4 +23,5 @@ type ConfigOptions struct {
 	AuthHeader         string
 	AuthPasswordStdin  bool
 	AuthTokenStdin     bool
+	AuthHeaderStdin    bool
 }

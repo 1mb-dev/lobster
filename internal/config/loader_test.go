@@ -28,7 +28,6 @@ func TestLoadFromFile_Success(t *testing.T) {
 		"timeout": "60s",
 		"rate": 5.0,
 		"user_agent": "TestAgent/1.0",
-		"follow_links": false,
 		"max_depth": 5,
 		"output_file": "test-results.json",
 		"verbose": true,
@@ -71,9 +70,6 @@ func TestLoadFromFile_Success(t *testing.T) {
 	}
 	if config.UserAgent != "TestAgent/1.0" {
 		t.Errorf("Expected UserAgent 'TestAgent/1.0', got '%s'", config.UserAgent)
-	}
-	if config.FollowLinks {
-		t.Errorf("Expected FollowLinks false, got true")
 	}
 	if config.MaxDepth != 5 {
 		t.Errorf("Expected MaxDepth 5, got %d", config.MaxDepth)
@@ -129,7 +125,6 @@ func TestSaveToFile_Success(t *testing.T) {
 		Timeout:     "45s",
 		Rate:        7.5,
 		UserAgent:   "SaveTest/1.0",
-		FollowLinks: true,
 		MaxDepth:    4,
 		OutputFile:  "output.json",
 		Verbose:     false,

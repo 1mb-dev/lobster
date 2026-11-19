@@ -154,11 +154,8 @@ func main() {
 		RequestTimeout:     requestTimeout,
 		UserAgent:          cfg.UserAgent,
 		Auth:               cfg.Auth,
-		FollowLinks:        cfg.FollowLinks,
 		MaxDepth:           cfg.MaxDepth,
 		QueueSize:          cfg.QueueSize,
-		Respect429:         cfg.Respect429,
-		DryRun:             cfg.DryRun,
 		InsecureSkipVerify: cfg.InsecureSkipVerify,
 		IgnoreRobots:       cfg.IgnoreRobots,
 		Rate:               cfg.Rate,
@@ -229,7 +226,6 @@ func runStressTest(config domain.TesterConfig, duration time.Duration, logger *s
 		"base_url", config.BaseURL,
 		"concurrency", config.Concurrency,
 		"rate", config.Rate,
-		"follow_links", config.FollowLinks,
 		"max_depth", config.MaxDepth)
 
 	return stressTester.Run(ctx)

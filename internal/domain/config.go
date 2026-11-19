@@ -54,12 +54,6 @@ type Config struct {
 	MaxDepth int `json:"max_depth"`
 	// QueueSize is the maximum number of URLs to queue for testing.
 	QueueSize int `json:"queue_size"`
-	// FollowLinks enables recursive link discovery from HTML pages.
-	FollowLinks bool `json:"follow_links"`
-	// Respect429 enables exponential backoff on HTTP 429 responses.
-	Respect429 bool `json:"respect_429"`
-	// DryRun discovers URLs without making test requests.
-	DryRun bool `json:"dry_run"`
 	// Verbose enables detailed logging output.
 	Verbose bool `json:"verbose"`
 	// InsecureSkipVerify skips TLS certificate validation (requires LOBSTER_INSECURE_TLS=true).
@@ -89,12 +83,6 @@ type TesterConfig struct {
 	QueueSize int
 	// MaxResponseSize is the maximum response body to read (default 10MB).
 	MaxResponseSize int64
-	// FollowLinks enables link discovery from responses.
-	FollowLinks bool
-	// Respect429 enables backoff on rate limit responses.
-	Respect429 bool
-	// DryRun discovers URLs without stress testing.
-	DryRun bool
 	// InsecureSkipVerify skips TLS certificate validation.
 	InsecureSkipVerify bool
 	// IgnoreRobots bypasses robots.txt restrictions.
@@ -114,11 +102,8 @@ func DefaultConfig() Config {
 		Timeout:            "30s",
 		Rate:               2.0,
 		UserAgent:          "Lobster/1.0",
-		FollowLinks:        true,
 		MaxDepth:           3,
 		QueueSize:          10000, // ~80KB per 10K queue (assuming 8 bytes per URLTask)
-		Respect429:         true,  // Respect rate limiting by default
-		DryRun:             false, // Perform actual tests by default
 		OutputFile:         "",
 		Verbose:            false,
 		PerformanceTargets: DefaultPerformanceTargets(),
