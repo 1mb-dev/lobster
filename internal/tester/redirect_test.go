@@ -217,3 +217,21 @@ func TestLoadClient_PrivateOnlyRefusesPublic(t *testing.T) {
 		t.Fatalf("Get public address = %v, want a PublicAddressError", err)
 	}
 }
+
+// privateOnly adds to the crawl's check: without -allow-private-ips a private
+// address stays refused, so no address is reachable.
+func TestLoadClient_PrivateOnlyKeepsCrawlCheck(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	config := testConfig("http://127.0.0.1:1/")
+	config.AllowPrivateIPs = false
+	tr, err := New(config, testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = tr.LoadClient(4, true).Get(server.URL)
+	var blocked *util.BlockedAddressError
+	if !errors.As(err, &blocked) {
+		t.Fatalf("Get 127.0.0.1 without -allow-private-ips = %v, want a BlockedAddressError", err)
+	}
+}

@@ -760,13 +760,19 @@ func (t *Tester) NewRequest(ctx context.Context, rawURL string) (*http.Request, 
 	return req, nil
 }
 
-// LoadClient returns a client with the crawl's TLS settings and redirect
-// policy, sized for maxConns concurrent connections. Its dial check is the
-// crawl's, or with privateOnly it refuses every public address.
+// LoadClient returns a client with the crawl's dial check, TLS settings and
+// redirect policy, sized for maxConns concurrent connections. With
+// privateOnly it also refuses every public address: both checks must pass.
 func (t *Tester) LoadClient(maxConns int, privateOnly bool) *http.Client {
 	control := util.DialControl(t.config.AllowPrivateIPs)
 	if privateOnly {
-		control = util.PrivateOnlyDialControl()
+		crawlCheck, privateCheck := control, util.PrivateOnlyDialControl()
+		control = func(network, address string, c syscall.RawConn) error {
+			if err := crawlCheck(network, address, c); err != nil {
+				return err
+			}
+			return privateCheck(network, address, c)
+		}
 	}
 	return &http.Client{
 		Timeout:       t.config.RequestTimeout,
