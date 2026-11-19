@@ -1,128 +1,144 @@
 package cli
 
 import (
+	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/1mb-dev/lobster/v2/internal/domain"
 )
 
+// load parses args on a fresh FlagSet and builds the config the way main does.
+func load(t *testing.T, configPath string, args ...string) (*domain.Config, error) {
+	t.Helper()
+	fs := flag.NewFlagSet("lobster", flag.ContinueOnError)
+	opts := RegisterConfigFlags(fs)
+	if err := fs.Parse(args); err != nil {
+		t.Fatalf("Parse(%v): %v", args, err)
+	}
+	return LoadConfiguration(fs, configPath, opts)
+}
+
+func writeConfig(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestLoadConfiguration_Defaults(t *testing.T) {
-	opts := &ConfigOptions{}
-	cfg, err := LoadConfiguration("", opts)
+	cfg, err := load(t, "")
 	if err != nil {
 		t.Fatalf("LoadConfiguration() error = %v", err)
 	}
-
-	if cfg.BaseURL == "" {
-		t.Error("Expected default BaseURL to be set")
-	}
-	if cfg.Concurrency == 0 {
-		t.Error("Expected default Concurrency to be set")
-	}
-	if cfg.Duration == "" {
-		t.Error("Expected default Duration to be set")
+	if want := domain.DefaultConfig(); cfg.BaseURL != want.BaseURL || cfg.Concurrency != want.Concurrency ||
+		cfg.Duration != want.Duration || cfg.Rate != want.Rate || cfg.MaxDepth != want.MaxDepth || !cfg.FollowLinks {
+		t.Errorf("defaults not applied: %+v", cfg)
 	}
 }
 
-func TestLoadConfiguration_CLIOverrides(t *testing.T) {
-	opts := &ConfigOptions{
-		BaseURL:     "http://custom.example.com",
-		Concurrency: 25,
-		Duration:    "10m",
-		Rate:        15.0,
+func TestLoadConfiguration_Flags(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+		check   func(*domain.Config) bool
+	}{
+		{name: "rate 0 refused", args: []string{"-rate", "0"}, wantErr: "MinRate"},
+		{name: "rate below MinRate refused", args: []string{"-rate", "0.05"}, wantErr: "MinRate"},
+		{name: "rate at MinRate accepted", args: []string{"-rate", "0.1"}, check: func(c *domain.Config) bool { return c.Rate == domain.MinRate }},
+		{name: "concurrency 0 refused", args: []string{"-concurrency", "0"}, wantErr: "concurrency"},
+		{name: "duration 0 refused", args: []string{"-duration", "0s"}, wantErr: "duration"},
+		{name: "negative duration refused", args: []string{"-duration", "-5s"}, wantErr: "duration"},
+		{name: "max-depth 0 kept", args: []string{"-max-depth", "0"}, check: func(c *domain.Config) bool { return c.MaxDepth == 0 }},
+		{name: "flags override defaults", args: []string{"-url", "http://custom.example.com", "-concurrency", "25", "-duration", "10m", "-rate", "15"},
+			check: func(c *domain.Config) bool {
+				return c.BaseURL == "http://custom.example.com" && c.Concurrency == 25 && c.Duration == "10m" && c.Rate == 15
+			}},
+		{name: "bool flag set to false", args: []string{"-follow-links=false"}, check: func(c *domain.Config) bool { return !c.FollowLinks }},
 	}
-	cfg, err := LoadConfiguration("", opts)
-	if err != nil {
-		t.Fatalf("LoadConfiguration() error = %v", err)
-	}
-
-	if cfg.BaseURL != "http://custom.example.com" {
-		t.Errorf("Expected BaseURL 'http://custom.example.com', got '%s'", cfg.BaseURL)
-	}
-	if cfg.Concurrency != 25 {
-		t.Errorf("Expected Concurrency 25, got %d", cfg.Concurrency)
-	}
-	if cfg.Duration != "10m" {
-		t.Errorf("Expected Duration '10m', got '%s'", cfg.Duration)
-	}
-	if cfg.Rate != 15.0 {
-		t.Errorf("Expected Rate 15.0, got %f", cfg.Rate)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := load(t, "", tt.args...)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want one containing %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("error = %v", err)
+			}
+			if !tt.check(cfg) {
+				t.Errorf("unexpected config: %+v", cfg)
+			}
+		})
 	}
 }
 
 func TestLoadConfiguration_FromFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "test-config.json")
-
-	configJSON := `{
+	path := writeConfig(t, `{
 		"base_url": "http://file.example.com",
 		"concurrency": 50,
-		"duration": "30m"
-	}`
+		"follow_links": false,
+		"performance_targets": {"p95_response_time_ms": 0}
+	}`)
 
-	err := os.WriteFile(configPath, []byte(configJSON), 0600)
-	if err != nil {
-		t.Fatalf("Failed to create test config file: %v", err)
-	}
-
-	opts := &ConfigOptions{}
-	cfg, err := LoadConfiguration(configPath, opts)
+	cfg, err := load(t, path)
 	if err != nil {
 		t.Fatalf("LoadConfiguration() error = %v", err)
 	}
-
-	if cfg.BaseURL != "http://file.example.com" {
-		t.Errorf("Expected BaseURL 'http://file.example.com', got '%s'", cfg.BaseURL)
+	if cfg.BaseURL != "http://file.example.com" || cfg.Concurrency != 50 {
+		t.Errorf("file values not applied: %+v", cfg)
 	}
-	if cfg.Concurrency != 50 {
-		t.Errorf("Expected Concurrency 50, got %d", cfg.Concurrency)
+	if cfg.FollowLinks {
+		t.Error("follow_links false in the file was overwritten by the flag default")
 	}
-}
-
-func TestLoadConfiguration_NonExistentFile(t *testing.T) {
-	opts := &ConfigOptions{}
-	_, err := LoadConfiguration("/nonexistent/path/config.json", opts)
-	if err == nil {
-		t.Error("Expected error for non-existent file, got nil")
+	if cfg.Duration != domain.DefaultConfig().Duration {
+		t.Errorf("duration absent from the file: got %q, want the default", cfg.Duration)
+	}
+	if cfg.PerformanceTargets.P95ResponseTimeMs != 0 {
+		t.Errorf("p95 target 0 in the file: got %g, want 0 (disabled)", cfg.PerformanceTargets.P95ResponseTimeMs)
 	}
 }
 
-func TestLoadConfiguration_CLIOverridesFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "test-config.json")
-
-	// File sets concurrency to 10, duration to 5m
-	configJSON := `{
-		"base_url": "http://file.example.com",
-		"concurrency": 10,
-		"duration": "5m"
-	}`
-
-	err := os.WriteFile(configPath, []byte(configJSON), 0600)
-	if err != nil {
-		t.Fatalf("Failed to create test config file: %v", err)
+func TestLoadConfiguration_FileErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		wantErr string
+	}{
+		{name: "missing file", path: "/nonexistent/path/config.json", wantErr: "cannot read"},
+		{name: "unknown key", path: writeConfig(t, `{"concurency": 5}`), wantErr: "concurency"},
+		{name: "rate 0 in file", path: writeConfig(t, `{"rate": 0}`), wantErr: "MinRate"},
+		{name: "negative target", path: writeConfig(t, `{"performance_targets": {"success_rate": -1}}`), wantErr: "success_rate"},
 	}
-
-	// CLI overrides concurrency to 25
-	opts := &ConfigOptions{
-		Concurrency: 25,
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := load(t, tt.path)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want one containing %q", err, tt.wantErr)
+			}
+		})
 	}
-	cfg, err := LoadConfiguration(configPath, opts)
+}
+
+func TestLoadConfiguration_FlagsOverrideFile(t *testing.T) {
+	path := writeConfig(t, `{"base_url": "http://file.example.com", "concurrency": 10, "duration": "5m"}`)
+
+	cfg, err := load(t, path, "-concurrency", "25")
 	if err != nil {
 		t.Fatalf("LoadConfiguration() error = %v", err)
 	}
-
-	// BaseURL should come from file
-	if cfg.BaseURL != "http://file.example.com" {
-		t.Errorf("Expected BaseURL 'http://file.example.com', got '%s'", cfg.BaseURL)
+	if cfg.BaseURL != "http://file.example.com" || cfg.Duration != "5m" {
+		t.Errorf("file values lost: %+v", cfg)
 	}
-	// Concurrency should be overridden by CLI
 	if cfg.Concurrency != 25 {
-		t.Errorf("Expected Concurrency 25 (CLI override), got %d", cfg.Concurrency)
-	}
-	// Duration should come from file
-	if cfg.Duration != "5m" {
-		t.Errorf("Expected Duration '5m' (from file), got '%s'", cfg.Duration)
+		t.Errorf("Concurrency = %d, want 25 from the flag", cfg.Concurrency)
 	}
 }
 
@@ -262,51 +278,12 @@ func TestBuildAuthConfig_Bearer(t *testing.T) {
 	}
 }
 
-func TestValidateRateLimit_Zero(t *testing.T) {
-	rate := 0.0
-	err := ValidateRateLimit(&rate)
-	if err != nil {
-		t.Errorf("ValidateRateLimit() error = %v", err)
-	}
-	// Rate should remain 0 (unlimited)
-	if rate != 0 {
-		t.Errorf("Expected rate to remain 0, got %f", rate)
-	}
-}
-
-func TestValidateRateLimit_BelowMinimum(t *testing.T) {
-	rate := 0.05 // Below MinRate of 0.1
-	err := ValidateRateLimit(&rate)
-	if err != nil {
-		t.Errorf("ValidateRateLimit() error = %v", err)
-	}
-	// Rate should be adjusted to MinRate
-	if rate != MinRate {
-		t.Errorf("Expected rate to be adjusted to %f, got %f", MinRate, rate)
-	}
-}
-
-func TestValidateRateLimit_Normal(t *testing.T) {
-	rate := 5.0
-	err := ValidateRateLimit(&rate)
-	if err != nil {
-		t.Errorf("ValidateRateLimit() error = %v", err)
-	}
-	// Rate should remain unchanged
-	if rate != 5.0 {
-		t.Errorf("Expected rate to remain 5.0, got %f", rate)
-	}
-}
-
-func TestValidateRateLimit_AtWarnThreshold(t *testing.T) {
-	// Rate exactly at WarnRate threshold should pass without warning prompts
-	rate := WarnRate // 1.0 - at threshold, no warning triggered
-	err := ValidateRateLimit(&rate)
-	if err != nil {
-		t.Errorf("ValidateRateLimit() error = %v", err)
-	}
-	if rate != WarnRate {
-		t.Errorf("Expected rate to remain at %f, got %f", WarnRate, rate)
+func TestConfirmLowRate(t *testing.T) {
+	// Rates below WarnRate prompt when stdin is a terminal, so only rates at or above it are tested.
+	for _, rate := range []float64{WarnRate, 5} {
+		if err := ConfirmLowRate(rate); err != nil {
+			t.Errorf("ConfirmLowRate(%g) error = %v", rate, err)
+		}
 	}
 }
 

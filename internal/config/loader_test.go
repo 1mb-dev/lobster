@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
@@ -47,7 +48,8 @@ func TestLoadFromFile_Success(t *testing.T) {
 	}
 
 	loader := NewLoader()
-	config, err := loader.LoadFromFile(configPath)
+	config := &domain.Config{}
+	err = loader.LoadFromFile(configPath, config)
 	if err != nil {
 		t.Fatalf("LoadFromFile() returned error: %v", err)
 	}
@@ -90,7 +92,7 @@ func TestLoadFromFile_Success(t *testing.T) {
 
 func TestLoadFromFile_NonExistentFile(t *testing.T) {
 	loader := NewLoader()
-	_, err := loader.LoadFromFile("/nonexistent/path/config.json")
+	err := loader.LoadFromFile("/nonexistent/path/config.json", &domain.Config{})
 	if err == nil {
 		t.Error("Expected error for non-existent file, got nil")
 	}
@@ -111,7 +113,7 @@ func TestLoadFromFile_InvalidJSON(t *testing.T) {
 	}
 
 	loader := NewLoader()
-	_, err = loader.LoadFromFile(configPath)
+	err = loader.LoadFromFile(configPath, &domain.Config{})
 	if err == nil {
 		t.Error("Expected error for invalid JSON, got nil")
 	}
@@ -155,7 +157,8 @@ func TestSaveToFile_Success(t *testing.T) {
 	}
 
 	// Load back and verify
-	loadedConfig, err := loader.LoadFromFile(configPath)
+	loadedConfig := &domain.Config{}
+	err = loader.LoadFromFile(configPath, loadedConfig)
 	if err != nil {
 		t.Fatalf("Failed to load saved config: %v", err)
 	}
@@ -167,102 +170,6 @@ func TestSaveToFile_Success(t *testing.T) {
 	if loadedConfig.Concurrency != config.Concurrency {
 		t.Errorf("Saved Concurrency mismatch: expected %d, got %d",
 			config.Concurrency, loadedConfig.Concurrency)
-	}
-}
-
-func TestMergeWithDefaults_EmptyConfig(t *testing.T) {
-	loader := NewLoader()
-	config := &domain.Config{}
-
-	merged := loader.MergeWithDefaults(config)
-
-	defaults := domain.DefaultConfig()
-
-	if merged.BaseURL != defaults.BaseURL {
-		t.Errorf("Expected merged BaseURL '%s', got '%s'", defaults.BaseURL, merged.BaseURL)
-	}
-	if merged.Concurrency != defaults.Concurrency {
-		t.Errorf("Expected merged Concurrency %d, got %d", defaults.Concurrency, merged.Concurrency)
-	}
-	if merged.Duration != defaults.Duration {
-		t.Errorf("Expected merged Duration '%s', got '%s'", defaults.Duration, merged.Duration)
-	}
-	if merged.UserAgent != defaults.UserAgent {
-		t.Errorf("Expected merged UserAgent '%s', got '%s'", defaults.UserAgent, merged.UserAgent)
-	}
-	if merged.QueueSize != defaults.QueueSize {
-		t.Errorf("Expected merged QueueSize %d, got %d", defaults.QueueSize, merged.QueueSize)
-	}
-}
-
-func TestMergeWithDefaults_PartialConfig(t *testing.T) {
-	loader := NewLoader()
-	config := &domain.Config{
-		BaseURL:     "http://custom.com",
-		Concurrency: 20,
-		// Duration, Timeout, etc. are zero values - should be filled with defaults
-	}
-
-	merged := loader.MergeWithDefaults(config)
-
-	// Custom values should be preserved
-	if merged.BaseURL != "http://custom.com" {
-		t.Errorf("Expected merged BaseURL 'http://custom.com', got '%s'", merged.BaseURL)
-	}
-	if merged.Concurrency != 20 {
-		t.Errorf("Expected merged Concurrency 20, got %d", merged.Concurrency)
-	}
-
-	// Default values should be filled in
-	defaults := domain.DefaultConfig()
-	if merged.Duration != defaults.Duration {
-		t.Errorf("Expected merged Duration '%s' (default), got '%s'", defaults.Duration, merged.Duration)
-	}
-	if merged.Timeout != defaults.Timeout {
-		t.Errorf("Expected merged Timeout '%s' (default), got '%s'", defaults.Timeout, merged.Timeout)
-	}
-	if merged.UserAgent != defaults.UserAgent {
-		t.Errorf("Expected merged UserAgent '%s' (default), got '%s'", defaults.UserAgent, merged.UserAgent)
-	}
-}
-
-func TestMergeWithDefaults_FullConfig(t *testing.T) {
-	loader := NewLoader()
-	config := &domain.Config{
-		BaseURL:     "http://full.com",
-		Concurrency: 25,
-		Duration:    "15m",
-		Timeout:     "90s",
-		Rate:        12.0,
-		UserAgent:   "FullTest/2.0",
-		FollowLinks: false,
-		MaxDepth:    10,
-		OutputFile:  "custom-output.json",
-		Verbose:     true,
-		PerformanceTargets: domain.PerformanceTargets{
-			RequestsPerSecond: 300,
-			AvgResponseTimeMs: 20,
-			P95ResponseTimeMs: 40,
-			P99ResponseTimeMs: 80,
-			SuccessRate:       99.9,
-			ErrorRate:         0.1,
-		},
-	}
-
-	merged := loader.MergeWithDefaults(config)
-
-	// All custom values should be preserved
-	if merged.BaseURL != "http://full.com" {
-		t.Errorf("Custom BaseURL not preserved")
-	}
-	if merged.Concurrency != 25 {
-		t.Errorf("Custom Concurrency not preserved")
-	}
-	if merged.Duration != "15m" {
-		t.Errorf("Custom Duration not preserved")
-	}
-	if merged.PerformanceTargets.RequestsPerSecond != 300 {
-		t.Errorf("Custom RequestsPerSecond not preserved")
 	}
 }
 
@@ -291,7 +198,8 @@ func TestLoadFromFile_EnvVarSubstitution(t *testing.T) {
 	}
 
 	loader := NewLoader()
-	config, err := loader.LoadFromFile(configPath)
+	config := &domain.Config{}
+	err = loader.LoadFromFile(configPath, config)
 	if err != nil {
 		t.Fatalf("LoadFromFile() returned error: %v", err)
 	}
@@ -321,7 +229,8 @@ func TestLoadFromFile_EnvVarWithDefault(t *testing.T) {
 	}
 
 	loader := NewLoader()
-	config, err := loader.LoadFromFile(configPath)
+	config := &domain.Config{}
+	err = loader.LoadFromFile(configPath, config)
 	if err != nil {
 		t.Fatalf("LoadFromFile() returned error: %v", err)
 	}
@@ -348,7 +257,7 @@ func TestLoadFromFile_MissingRequiredEnvVar(t *testing.T) {
 	}
 
 	loader := NewLoader()
-	_, err = loader.LoadFromFile(configPath)
+	err = loader.LoadFromFile(configPath, &domain.Config{})
 	if err == nil {
 		t.Error("Expected error for missing required env var, got nil")
 	}
@@ -382,73 +291,40 @@ func TestSubstituteEnvVars_NoVars(t *testing.T) {
 	}
 }
 
-func TestMergeString(t *testing.T) {
-	tests := []struct {
-		name     string
-		value    string
-		fallback string
-		expected string
-	}{
-		{"empty value uses fallback", "", "fallback", "fallback"},
-		{"non-empty value preserved", "value", "fallback", "value"},
-		{"both empty returns empty", "", "", ""},
+func TestLoadFromFile_OverDefaults(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"max_depth": 0, "performance_targets": {"p95_response_time_ms": 0}}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := mergeString(tt.value, tt.fallback)
-			if result != tt.expected {
-				t.Errorf("mergeString(%q, %q) = %q, want %q",
-					tt.value, tt.fallback, result, tt.expected)
-			}
-		})
-	}
-}
-
-func TestMergeInt(t *testing.T) {
-	tests := []struct {
-		name     string
-		value    int
-		fallback int
-		expected int
-	}{
-		{"zero value uses fallback", 0, 10, 10},
-		{"non-zero value preserved", 5, 10, 5},
-		{"both zero returns zero", 0, 0, 0},
-		{"negative value preserved", -5, 10, -5},
+	cfg := domain.DefaultConfig()
+	cfg.PerformanceTargets.P95ResponseTimeMs = 100
+	if err := NewLoader().LoadFromFile(configPath, &cfg); err != nil {
+		t.Fatalf("LoadFromFile() error = %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := mergeInt(tt.value, tt.fallback)
-			if result != tt.expected {
-				t.Errorf("mergeInt(%d, %d) = %d, want %d",
-					tt.value, tt.fallback, result, tt.expected)
-			}
-		})
+	if cfg.MaxDepth != 0 {
+		t.Errorf("max_depth 0 in the file: got %d, want 0", cfg.MaxDepth)
+	}
+	if cfg.PerformanceTargets.P95ResponseTimeMs != 0 {
+		t.Errorf("p95 target 0 in the file: got %g, want 0", cfg.PerformanceTargets.P95ResponseTimeMs)
+	}
+	if want := domain.DefaultConfig().Concurrency; cfg.Concurrency != want {
+		t.Errorf("concurrency absent from the file: got %d, want default %d", cfg.Concurrency, want)
+	}
+	if cfg.PerformanceTargets.SuccessRate != domain.DefaultPerformanceTargets().SuccessRate {
+		t.Errorf("success_rate absent from the file: got %g, want default", cfg.PerformanceTargets.SuccessRate)
 	}
 }
 
-func TestMergeFloat64(t *testing.T) {
-	tests := []struct {
-		name     string
-		value    float64
-		fallback float64
-		expected float64
-	}{
-		{"zero value uses fallback", 0, 10.5, 10.5},
-		{"non-zero value preserved", 5.5, 10.5, 5.5},
-		{"both zero returns zero", 0, 0, 0},
-		{"negative value preserved", -5.5, 10.5, -5.5},
+func TestLoadFromFile_UnknownKey(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"concurency": 5}`), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := mergeFloat64(tt.value, tt.fallback)
-			if result != tt.expected {
-				t.Errorf("mergeFloat64(%f, %f) = %f, want %f",
-					tt.value, tt.fallback, result, tt.expected)
-			}
-		})
+	err := NewLoader().LoadFromFile(configPath, &domain.Config{})
+	if err == nil || !strings.Contains(err.Error(), "concurency") {
+		t.Fatalf("LoadFromFile() error = %v, want an unknown-field error naming the key", err)
 	}
 }

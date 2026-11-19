@@ -65,21 +65,18 @@ func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 		return nil, fmt.Errorf("creating crawler: %w", err)
 	}
 
-	// Create token bucket rate limiter using goflow
-	var rateLimiter bucket.Limiter
-	if config.Rate > 0 {
-		// Create token bucket with burst capacity of 2x the rate per second
-		burst := int(config.Rate * 2)
-		if burst < 1 {
-			burst = 1
-		}
+	if config.Rate <= 0 {
+		return nil, fmt.Errorf("rate must be > 0, got %g", config.Rate)
+	}
 
-		rateLimiter, err = bucket.NewSafe(bucket.Limit(config.Rate), burst)
-		if err != nil {
-			// Rate limiting was explicitly requested - fail rather than silently proceed
-			// without it, which could cause unintended DoS against the target
-			return nil, fmt.Errorf("creating rate limiter (rate=%.2f): %w", config.Rate, err)
-		}
+	// Create token bucket with burst capacity of 2x the rate per second
+	burst := int(config.Rate * 2)
+	if burst < 1 {
+		burst = 1
+	}
+	rateLimiter, err := bucket.NewSafe(bucket.Limit(config.Rate), burst)
+	if err != nil {
+		return nil, fmt.Errorf("creating rate limiter (rate=%.2f): %w", config.Rate, err)
 	}
 
 	// Use configured queue size, default to defaultQueueSize if not set
@@ -351,13 +348,11 @@ func (t *Tester) processURL(ctx context.Context, task domain.URLTask) {
 	}
 
 	// Apply rate limiting using goflow's token bucket
-	if t.rateLimiter != nil {
-		if err := t.rateLimiter.Wait(ctx); err != nil {
-			// Context was canceled or deadline exceeded
-			t.recordError(task.URL, fmt.Sprintf("rate limiter wait canceled: %v", err), task.Depth)
-			atomic.AddInt64(&t.results.FailedRequests, 1)
-			return
-		}
+	if err := t.rateLimiter.Wait(ctx); err != nil {
+		// Context was canceled or deadline exceeded
+		t.recordError(task.URL, fmt.Sprintf("rate limiter wait canceled: %v", err), task.Depth)
+		atomic.AddInt64(&t.results.FailedRequests, 1)
+		return
 	}
 
 	atomic.AddInt64(&t.results.TotalRequests, 1)

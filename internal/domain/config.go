@@ -6,6 +6,9 @@ import (
 	"time"
 )
 
+// MinRate is the lowest accepted rate, in requests per second.
+const MinRate = 0.1
+
 // AuthConfig represents authentication configuration for HTTP requests.
 // Supports basic auth, bearer tokens, cookies, and custom headers.
 // Credentials should be provided via environment variables or stdin for security.
@@ -43,7 +46,7 @@ type Config struct {
 	UserAgent string `json:"user_agent"`
 	// OutputFile is the path to write the report (HTML or JSON based on extension).
 	OutputFile string `json:"output_file"`
-	// Rate is the maximum requests per second per worker (0 = unlimited).
+	// Rate is the maximum requests per second, shared by all workers (at least MinRate).
 	Rate float64 `json:"rate"`
 	// Concurrency is the number of parallel workers making requests.
 	Concurrency int `json:"concurrency"`
@@ -76,7 +79,7 @@ type TesterConfig struct {
 	BaseURL string
 	// UserAgent is the User-Agent header value.
 	UserAgent string
-	// Rate is the maximum requests per second per worker.
+	// Rate is the maximum requests per second, shared by all workers.
 	Rate float64
 	// Concurrency is the number of parallel workers.
 	Concurrency int
@@ -137,20 +140,20 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("queue-size must be > 0, got %d", c.QueueSize)
 	}
 
-	if c.Rate < 0 {
-		return fmt.Errorf("rate cannot be negative, got %.2f", c.Rate)
+	if c.Rate < MinRate {
+		return fmt.Errorf("rate must be at least MinRate (%.1f req/s), got %g", MinRate, c.Rate)
 	}
 
-	if c.Duration != "" {
-		if _, err := time.ParseDuration(c.Duration); err != nil {
-			return fmt.Errorf("invalid duration %q: %w", c.Duration, err)
-		}
+	if err := positiveDuration("duration", c.Duration); err != nil {
+		return err
 	}
 
-	if c.Timeout != "" {
-		if _, err := time.ParseDuration(c.Timeout); err != nil {
-			return fmt.Errorf("invalid timeout %q: %w", c.Timeout, err)
-		}
+	if err := positiveDuration("timeout", c.Timeout); err != nil {
+		return err
+	}
+
+	if err := c.PerformanceTargets.Validate(); err != nil {
+		return err
 	}
 
 	if c.BaseURL == "" {
@@ -164,6 +167,39 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+// positiveDuration refuses a duration string that does not parse or is not above zero.
+func positiveDuration(name, value string) error {
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		return fmt.Errorf("invalid %s %q: %w", name, value, err)
+	}
+	if d <= 0 {
+		return fmt.Errorf("%s must be > 0, got %q", name, value)
+	}
+	return nil
+}
+
+// Validate refuses negative targets; a target of 0 is disabled.
+func (p PerformanceTargets) Validate() error {
+	targets := []struct {
+		name  string
+		value float64
+	}{
+		{"requests_per_second", p.RequestsPerSecond},
+		{"avg_response_time_ms", p.AvgResponseTimeMs},
+		{"p95_response_time_ms", p.P95ResponseTimeMs},
+		{"p99_response_time_ms", p.P99ResponseTimeMs},
+		{"success_rate", p.SuccessRate},
+		{"error_rate", p.ErrorRate},
+	}
+	for _, t := range targets {
+		if t.value < 0 {
+			return fmt.Errorf("performance target %s cannot be negative (0 disables it), got %g", t.name, t.value)
+		}
+	}
 	return nil
 }
 

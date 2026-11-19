@@ -1,6 +1,7 @@
 package validator
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -314,9 +315,6 @@ func TestGetValidationSummary(t *testing.T) {
 }
 
 func TestValidateResults_TargetCount(t *testing.T) {
-	targets := domain.DefaultPerformanceTargets()
-	v := New(targets)
-
 	results := &domain.TestResults{
 		TotalRequests:      100,
 		SuccessfulRequests: 95,
@@ -327,35 +325,37 @@ func TestValidateResults_TargetCount(t *testing.T) {
 		},
 	}
 
-	v.ValidateResults(results)
-
-	// Should have 6 targets:
-	// 1. Requests per Second
-	// 2. Average Response Time
-	// 3. P95 Response Time
-	// 4. P99 Response Time
-	// 5. Success Rate
-	// 6. Error Rate
-	expectedTargetCount := 6
-	if len(v.targets) != expectedTargetCount {
-		t.Errorf("Expected %d targets, got %d", expectedTargetCount, len(v.targets))
+	all := domain.PerformanceTargets{
+		RequestsPerSecond: 10, AvgResponseTimeMs: 100, P95ResponseTimeMs: 100,
+		P99ResponseTimeMs: 100, SuccessRate: 90, ErrorRate: 10,
 	}
+	p95Off := all
+	p95Off.P95ResponseTimeMs = 0
 
-	// Verify target names
-	expectedNames := []string{
-		"Requests per Second",
-		"Average Response Time",
-		"95th Percentile Response Time",
-		"99th Percentile Response Time",
-		"Success Rate",
-		"Error Rate",
+	tests := []struct {
+		name    string
+		targets domain.PerformanceTargets
+		want    []string
+	}{
+		{"defaults judge success rate only", domain.DefaultPerformanceTargets(), []string{"Success Rate"}},
+		{"all enabled", all, []string{"Requests per Second", "Average Response Time", "95th Percentile Response Time",
+			"99th Percentile Response Time", "Success Rate", "Error Rate"}},
+		{"a 0 target is not judged", p95Off, []string{"Requests per Second", "Average Response Time",
+			"99th Percentile Response Time", "Success Rate", "Error Rate"}},
+		{"all disabled", domain.PerformanceTargets{}, nil},
 	}
-
-	for i, expectedName := range expectedNames {
-		if !strings.Contains(v.targets[i].Name, expectedName) {
-			t.Errorf("Expected target %d to be '%s', got '%s'",
-				i, expectedName, v.targets[i].Name)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := New(tt.targets)
+			v.ValidateResults(results)
+			var got []string
+			for _, target := range v.targets {
+				got = append(got, target.Name)
+			}
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("judged %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -597,5 +597,14 @@ func TestGetValidationSummary_Structure(t *testing.T) {
 				t.Errorf("Expected key '%s' in target", key)
 			}
 		}
+	}
+}
+
+func TestGetValidationSummary_NoTargets(t *testing.T) {
+	v := New(domain.PerformanceTargets{})
+	v.ValidateResults(&domain.TestResults{TotalRequests: 1, SuccessfulRequests: 1})
+
+	if _, err := json.Marshal(v.GetValidationSummary()); err != nil {
+		t.Fatalf("summary with no targets does not marshal: %v", err)
 	}
 }

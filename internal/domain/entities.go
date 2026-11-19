@@ -140,16 +140,9 @@ type PerformanceTargets struct {
 	ErrorRate float64 `json:"error_rate"`
 }
 
-// DefaultPerformanceTargets returns sensible default performance targets
+// DefaultPerformanceTargets enables only the success-rate target; a target of 0 is disabled.
 func DefaultPerformanceTargets() PerformanceTargets {
-	return PerformanceTargets{
-		RequestsPerSecond: 100,
-		AvgResponseTimeMs: 50,
-		P95ResponseTimeMs: 100,
-		P99ResponseTimeMs: 200,
-		SuccessRate:       99.0,
-		ErrorRate:         1.0,
-	}
+	return PerformanceTargets{SuccessRate: 99.0}
 }
 
 // AddURLResult constants for URL addition outcomes.

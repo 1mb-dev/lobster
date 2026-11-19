@@ -31,7 +31,7 @@ func testConfig(baseURL string) domain.TesterConfig {
 		UserAgent:      "TestAgent/1.0",
 		FollowLinks:    false,
 		MaxDepth:       1,
-		Rate:           0,    // No rate limiting for faster tests
+		Rate:           1000, // High enough not to slow tests
 		IgnoreRobots:   true, // Skip robots.txt in tests
 	}
 }
@@ -1469,5 +1469,13 @@ func TestMonitor_VerboseMode(t *testing.T) {
 		// Success - monitor exited
 	case <-time.After(500 * time.Millisecond):
 		t.Error("Monitor in verbose mode did not exit in time")
+	}
+}
+
+func TestNew_RequiresRate(t *testing.T) {
+	config := testConfig("http://example.com")
+	config.Rate = 0
+	if _, err := New(config, testLogger()); err == nil {
+		t.Fatal("New() with rate 0 succeeded; every run needs a rate limiter")
 	}
 }

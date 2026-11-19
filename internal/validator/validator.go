@@ -76,63 +76,75 @@ func (v *Validator) ValidateResults(results *domain.TestResults) {
 	}
 
 	// Throughput validation
-	v.targets = append(v.targets, domain.PerformanceTarget{
-		Name:        "Requests per Second",
-		Target:      fmt.Sprintf("≥ %.1f req/s", v.targetConfig.RequestsPerSecond),
-		Actual:      fmt.Sprintf("%.1f req/s", results.RequestsPerSecond),
-		Description: fmt.Sprintf("Target: >%.1f req/s for optimal throughput", v.targetConfig.RequestsPerSecond),
-		Passed:      results.RequestsPerSecond >= v.targetConfig.RequestsPerSecond,
-	})
+	if v.targetConfig.RequestsPerSecond > 0 {
+		v.targets = append(v.targets, domain.PerformanceTarget{
+			Name:        "Requests per Second",
+			Target:      fmt.Sprintf("≥ %.1f req/s", v.targetConfig.RequestsPerSecond),
+			Actual:      fmt.Sprintf("%.1f req/s", results.RequestsPerSecond),
+			Description: fmt.Sprintf("Target: >%.1f req/s for optimal throughput", v.targetConfig.RequestsPerSecond),
+			Passed:      results.RequestsPerSecond >= v.targetConfig.RequestsPerSecond,
+		})
+	}
 
 	// Average response time
-	avgMs := float64(avgResponseTime.Nanoseconds()) / 1e6
-	v.targets = append(v.targets, domain.PerformanceTarget{
-		Name:        "Average Response Time",
-		Target:      fmt.Sprintf("< %.1fms", v.targetConfig.AvgResponseTimeMs),
-		Actual:      fmt.Sprintf("%.1fms", avgMs),
-		Description: fmt.Sprintf("Target: <%.1fms for excellent user experience", v.targetConfig.AvgResponseTimeMs),
-		Passed:      avgMs < v.targetConfig.AvgResponseTimeMs,
-	})
+	if v.targetConfig.AvgResponseTimeMs > 0 {
+		avgMs := float64(avgResponseTime.Nanoseconds()) / 1e6
+		v.targets = append(v.targets, domain.PerformanceTarget{
+			Name:        "Average Response Time",
+			Target:      fmt.Sprintf("< %.1fms", v.targetConfig.AvgResponseTimeMs),
+			Actual:      fmt.Sprintf("%.1fms", avgMs),
+			Description: fmt.Sprintf("Target: <%.1fms for excellent user experience", v.targetConfig.AvgResponseTimeMs),
+			Passed:      avgMs < v.targetConfig.AvgResponseTimeMs,
+		})
+	}
 
 	// 95th percentile response time
-	p95Ms := float64(p95ResponseTime.Nanoseconds()) / 1e6
-	v.targets = append(v.targets, domain.PerformanceTarget{
-		Name:        "95th Percentile Response Time",
-		Target:      fmt.Sprintf("< %.1fms", v.targetConfig.P95ResponseTimeMs),
-		Actual:      fmt.Sprintf("%.1fms", p95Ms),
-		Description: fmt.Sprintf("Target: <%.1fms for consistent performance", v.targetConfig.P95ResponseTimeMs),
-		Passed:      p95Ms < v.targetConfig.P95ResponseTimeMs,
-	})
+	if v.targetConfig.P95ResponseTimeMs > 0 {
+		p95Ms := float64(p95ResponseTime.Nanoseconds()) / 1e6
+		v.targets = append(v.targets, domain.PerformanceTarget{
+			Name:        "95th Percentile Response Time",
+			Target:      fmt.Sprintf("< %.1fms", v.targetConfig.P95ResponseTimeMs),
+			Actual:      fmt.Sprintf("%.1fms", p95Ms),
+			Description: fmt.Sprintf("Target: <%.1fms for consistent performance", v.targetConfig.P95ResponseTimeMs),
+			Passed:      p95Ms < v.targetConfig.P95ResponseTimeMs,
+		})
+	}
 
 	// 99th percentile response time
-	p99Ms := float64(p99ResponseTime.Nanoseconds()) / 1e6
-	v.targets = append(v.targets, domain.PerformanceTarget{
-		Name:        "99th Percentile Response Time",
-		Target:      fmt.Sprintf("< %.1fms", v.targetConfig.P99ResponseTimeMs),
-		Actual:      fmt.Sprintf("%.1fms", p99Ms),
-		Description: fmt.Sprintf("Target: <%.1fms even for worst-case scenarios", v.targetConfig.P99ResponseTimeMs),
-		Passed:      p99Ms < v.targetConfig.P99ResponseTimeMs,
-	})
+	if v.targetConfig.P99ResponseTimeMs > 0 {
+		p99Ms := float64(p99ResponseTime.Nanoseconds()) / 1e6
+		v.targets = append(v.targets, domain.PerformanceTarget{
+			Name:        "99th Percentile Response Time",
+			Target:      fmt.Sprintf("< %.1fms", v.targetConfig.P99ResponseTimeMs),
+			Actual:      fmt.Sprintf("%.1fms", p99Ms),
+			Description: fmt.Sprintf("Target: <%.1fms even for worst-case scenarios", v.targetConfig.P99ResponseTimeMs),
+			Passed:      p99Ms < v.targetConfig.P99ResponseTimeMs,
+		})
+	}
 
 	// Success rate
-	successRate := (float64(results.SuccessfulRequests) / float64(results.TotalRequests)) * 100
-	v.targets = append(v.targets, domain.PerformanceTarget{
-		Name:        "Success Rate",
-		Target:      fmt.Sprintf("> %.1f%%", v.targetConfig.SuccessRate),
-		Actual:      fmt.Sprintf("%.2f%%", successRate),
-		Description: fmt.Sprintf("Target: >%.1f%% successful requests for production readiness", v.targetConfig.SuccessRate),
-		Passed:      successRate > v.targetConfig.SuccessRate,
-	})
+	if v.targetConfig.SuccessRate > 0 {
+		successRate := (float64(results.SuccessfulRequests) / float64(results.TotalRequests)) * 100
+		v.targets = append(v.targets, domain.PerformanceTarget{
+			Name:        "Success Rate",
+			Target:      fmt.Sprintf("> %.1f%%", v.targetConfig.SuccessRate),
+			Actual:      fmt.Sprintf("%.2f%%", successRate),
+			Description: fmt.Sprintf("Target: >%.1f%% successful requests for production readiness", v.targetConfig.SuccessRate),
+			Passed:      successRate > v.targetConfig.SuccessRate,
+		})
+	}
 
 	// Error rate
-	errorRate := float64(results.FailedRequests) / float64(results.TotalRequests) * 100
-	v.targets = append(v.targets, domain.PerformanceTarget{
-		Name:        "Error Rate",
-		Target:      fmt.Sprintf("< %.1f%%", v.targetConfig.ErrorRate),
-		Actual:      fmt.Sprintf("%.2f%%", errorRate),
-		Description: fmt.Sprintf("Target: <%.1f%% for production reliability", v.targetConfig.ErrorRate),
-		Passed:      errorRate < v.targetConfig.ErrorRate,
-	})
+	if v.targetConfig.ErrorRate > 0 {
+		errorRate := float64(results.FailedRequests) / float64(results.TotalRequests) * 100
+		v.targets = append(v.targets, domain.PerformanceTarget{
+			Name:        "Error Rate",
+			Target:      fmt.Sprintf("< %.1f%%", v.targetConfig.ErrorRate),
+			Actual:      fmt.Sprintf("%.2f%%", errorRate),
+			Description: fmt.Sprintf("Target: <%.1f%% for production reliability", v.targetConfig.ErrorRate),
+			Passed:      errorRate < v.targetConfig.ErrorRate,
+		})
+	}
 }
 
 // PrintValidationReport prints a detailed performance validation report
@@ -154,6 +166,11 @@ func (v *Validator) PrintValidationReport() {
 		fmt.Printf("%s %-30s %s\n", status, target.Name+":", target.Actual)
 		fmt.Printf("    %s\n", target.Description)
 		fmt.Println()
+	}
+
+	if total == 0 {
+		fmt.Println("No performance targets enabled.")
+		return
 	}
 
 	fmt.Printf("Overall: %d/%d targets met (%.1f%%)\n", passed, total, float64(passed)/float64(total)*100)
@@ -219,10 +236,15 @@ func (v *Validator) GetValidationSummary() map[string]interface{} {
 		}
 	}
 
+	metPct := 0.0
+	if total > 0 {
+		metPct = float64(passed) / float64(total) * 100
+	}
+
 	return map[string]interface{}{
 		"targets_met":    passed,
 		"total_targets":  total,
-		"success_rate":   float64(passed) / float64(total) * 100,
+		"success_rate":   metPct,
 		"overall_status": v.getOverallStatus(passed, total),
 		"targets":        targetDetails,
 	}

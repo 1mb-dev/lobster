@@ -25,40 +25,19 @@ var version = "dev"
 
 func main() {
 	var (
-		configPath         = flag.String("config", "", "Path to configuration file (JSON)")
-		baseURL            = flag.String("url", "", "Base URL to test")
-		concurrency        = flag.Int("concurrency", 0, "Number of concurrent workers")
-		duration           = flag.String("duration", "", "Test duration (e.g., 30s, 5m, 1h)")
-		timeout            = flag.String("timeout", "", "Request timeout")
-		rate               = flag.Float64("rate", 0, "Requests per second limit")
-		userAgent          = flag.String("user-agent", "", "User agent string")
-		followLinks        = flag.Bool("follow-links", true, "Follow links found in pages")
-		maxDepth           = flag.Int("max-depth", 0, "Maximum crawl depth")
-		queueSize          = flag.Int("queue-size", 0, "URL queue buffer size (default: 10000)")
-		respect429         = flag.Bool("respect-429", true, "Respect HTTP 429 with exponential backoff")
-		dryRun             = flag.Bool("dry-run", false, "Discover URLs without making test requests")
-		insecureSkipVerify = flag.Bool("insecure-skip-verify", false, "INSECURE: Skip TLS certificate verification")
-		allowPrivateIPs    = flag.Bool("allow-private-ips", false, "Allow private/localhost IPs (for internal testing)")
-		ignoreRobots       = flag.Bool("ignore-robots", false, "Ignore robots.txt directives (use responsibly)")
-		outputFile         = flag.String("output", "", "Output file for results (JSON)")
-		verbose            = flag.Bool("verbose", false, "Verbose logging")
-		noProgress         = flag.Bool("no-progress", false, "Disable progress updates")
-		showVersion        = flag.Bool("version", false, "Show version information")
-		showHelp           = flag.Bool("help", false, "Show help message")
-		compareAgainst     = flag.String("compare", "", "Compare against target (e.g., 'Ghost', 'WordPress')")
-
-		// Authentication flags
-		authType          = flag.String("auth-type", "", "Authentication type: basic, bearer, cookie, header")
-		authUsername      = flag.String("auth-username", "", "Username for basic authentication")
-		authPasswordStdin = flag.Bool("auth-password-stdin", false, "Read password from stdin (one line)")
-		authTokenStdin    = flag.Bool("auth-token-stdin", false, "Read bearer token from stdin (one line)")
-		authHeader        = flag.String("auth-header", "", "Custom header (Name:Value)")
+		configPath      = flag.String("config", "", "Path to configuration file (JSON)")
+		allowPrivateIPs = flag.Bool("allow-private-ips", false, "Allow private/localhost IPs (for internal testing)")
+		noProgress      = flag.Bool("no-progress", false, "Disable progress updates")
+		showVersion     = flag.Bool("version", false, "Show version information")
+		showHelp        = flag.Bool("help", false, "Show help message")
+		compareAgainst  = flag.String("compare", "", "Compare against target (e.g., 'Ghost', 'WordPress')")
 	)
+	opts := cli.RegisterConfigFlags(flag.CommandLine)
 	flag.Parse()
 
 	// Setup logger early so all errors use consistent output format
 	logLevel := slog.LevelInfo
-	if *verbose {
+	if opts.Verbose {
 		logLevel = slog.LevelDebug
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
@@ -76,28 +55,7 @@ func main() {
 	}
 
 	// Load configuration
-	cfg, err := cli.LoadConfiguration(*configPath, &cli.ConfigOptions{
-		BaseURL:            *baseURL,
-		Concurrency:        *concurrency,
-		Duration:           *duration,
-		Timeout:            *timeout,
-		Rate:               *rate,
-		UserAgent:          *userAgent,
-		FollowLinks:        *followLinks,
-		MaxDepth:           *maxDepth,
-		QueueSize:          *queueSize,
-		Respect429:         *respect429,
-		DryRun:             *dryRun,
-		InsecureSkipVerify: *insecureSkipVerify,
-		IgnoreRobots:       *ignoreRobots,
-		OutputFile:         *outputFile,
-		Verbose:            *verbose,
-		AuthType:           *authType,
-		AuthUsername:       *authUsername,
-		AuthPasswordStdin:  *authPasswordStdin,
-		AuthTokenStdin:     *authTokenStdin,
-		AuthHeader:         *authHeader,
-	})
+	cfg, err := cli.LoadConfiguration(flag.CommandLine, *configPath, opts)
 	if err != nil {
 		logger.Error("Configuration error",
 			"error", err,
@@ -105,11 +63,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Validate and enforce rate limit safety
-	if validateErr := cli.ValidateRateLimit(&cfg.Rate); validateErr != nil {
-		logger.Error("Invalid rate limit",
-			"error", validateErr,
-			"hint", "Use -rate flag with a value >= 0.1")
+	if confirmErr := cli.ConfirmLowRate(cfg.Rate); confirmErr != nil {
+		logger.Error("Run canceled", "error", confirmErr)
 		os.Exit(1)
 	}
 

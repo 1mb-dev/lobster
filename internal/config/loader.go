@@ -22,28 +22,29 @@ func NewLoader() *Loader {
 	return &Loader{}
 }
 
-// LoadFromFile loads configuration from a JSON file.
+// LoadFromFile decodes a JSON config file over cfg: keys present in the file
+// replace cfg's values, absent keys keep them, and an unknown key is an error.
 // Supports environment variable substitution using ${VAR_NAME} syntax.
 // Optional default values can be specified with ${VAR_NAME:-default}.
-func (l *Loader) LoadFromFile(path string) (*domain.Config, error) {
+func (l *Loader) LoadFromFile(path string, cfg *domain.Config) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("cannot read config file %s: %w\nCheck if file exists and has read permissions", path, err)
+		return fmt.Errorf("cannot read config file %s: %w\nCheck if file exists and has read permissions", path, err)
 	}
 
 	// Substitute environment variables before parsing JSON
 	expandedData, err := substituteEnvVars(string(data))
 	if err != nil {
-		return nil, fmt.Errorf("environment variable substitution failed: %w", err)
+		return fmt.Errorf("environment variable substitution failed: %w", err)
 	}
 
-	var config domain.Config
-	err = json.Unmarshal([]byte(expandedData), &config)
-	if err != nil {
-		return nil, fmt.Errorf("invalid JSON in config file: %w\nVerify JSON syntax at %s", err, path)
+	dec := json.NewDecoder(strings.NewReader(expandedData))
+	dec.DisallowUnknownFields()
+	if err = dec.Decode(cfg); err != nil {
+		return fmt.Errorf("invalid config file %s: %w", path, err)
 	}
 
-	return &config, nil
+	return nil
 }
 
 // substituteEnvVars replaces ${VAR_NAME} patterns with environment variable values.
@@ -100,55 +101,4 @@ func (l *Loader) SaveToFile(config *domain.Config, path string) error {
 	}
 
 	return nil
-}
-
-// mergeString returns value if non-empty, otherwise returns fallback.
-func mergeString(value, fallback string) string {
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
-// mergeInt returns value if non-zero, otherwise returns fallback.
-func mergeInt(value, fallback int) int {
-	if value == 0 {
-		return fallback
-	}
-	return value
-}
-
-// mergeFloat64 returns value if non-zero, otherwise returns fallback.
-func mergeFloat64(value, fallback float64) float64 {
-	if value == 0 {
-		return fallback
-	}
-	return value
-}
-
-// MergeWithDefaults merges provided config with defaults.
-// Zero values in config are replaced with corresponding default values.
-func (l *Loader) MergeWithDefaults(config *domain.Config) *domain.Config {
-	defaults := domain.DefaultConfig()
-
-	config.BaseURL = mergeString(config.BaseURL, defaults.BaseURL)
-	config.Concurrency = mergeInt(config.Concurrency, defaults.Concurrency)
-	config.Duration = mergeString(config.Duration, defaults.Duration)
-	config.Timeout = mergeString(config.Timeout, defaults.Timeout)
-	config.Rate = mergeFloat64(config.Rate, defaults.Rate)
-	config.UserAgent = mergeString(config.UserAgent, defaults.UserAgent)
-	config.MaxDepth = mergeInt(config.MaxDepth, defaults.MaxDepth)
-	config.QueueSize = mergeInt(config.QueueSize, defaults.QueueSize)
-
-	// Merge performance targets
-	pt := &config.PerformanceTargets
-	dt := &defaults.PerformanceTargets
-	pt.RequestsPerSecond = mergeFloat64(pt.RequestsPerSecond, dt.RequestsPerSecond)
-	pt.AvgResponseTimeMs = mergeFloat64(pt.AvgResponseTimeMs, dt.AvgResponseTimeMs)
-	pt.P95ResponseTimeMs = mergeFloat64(pt.P95ResponseTimeMs, dt.P95ResponseTimeMs)
-	pt.P99ResponseTimeMs = mergeFloat64(pt.P99ResponseTimeMs, dt.P99ResponseTimeMs)
-	pt.SuccessRate = mergeFloat64(pt.SuccessRate, dt.SuccessRate)
-	pt.ErrorRate = mergeFloat64(pt.ErrorRate, dt.ErrorRate)
-
-	return config
 }
