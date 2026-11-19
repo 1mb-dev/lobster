@@ -25,7 +25,7 @@ go install github.com/1mb-dev/lobster/v2/cmd/lobster@latest
 
 ## Basic Usage
 
-### 1. Test Your Local Application
+### 1. Check Your Local Application
 
 Start your application on port 3000, then run:
 
@@ -34,61 +34,43 @@ lobster -url http://localhost:3000 -allow-private-ips
 ```
 
 This will:
-- Run for 2 minutes (default duration), even if the last page is fetched sooner
-- Use 5 concurrent workers (default concurrency) sharing one rate limit
-- Discover same-host linked pages up to depth 3 and fetch each once
-- Print a summary and a pass or fail line per performance target
+- Follow same-host links from the base page up to depth 3 and fetch each page once
+- Space requests at 2 per second (default `-rate`), shared by 5 workers
+- Stop when every page has been fetched, or after 2 minutes (default `-duration`)
+- Print a summary and a PASS or FAIL line per performance target, and exit 0 on PASS, 1 on FAIL
 
-Note: The `-allow-private-ips` flag is required for localhost and private network testing (SSRF protection).
+`-allow-private-ips` is required for localhost and private addresses.
 
-### 2. Customize the Test
+### 2. Customize the Crawl
 
 ```bash
 lobster \
   -url http://localhost:3000 \
   -allow-private-ips \
+  -rate 10 \
   -duration 5m \
-  -concurrency 10 \
-  -rate 5.0 \
-  -output results.json
+  -output results.json \
+  -html report.html
 ```
 
 Parameters:
-- `-duration 5m`: Run for 5 minutes
-- `-concurrency 10`: Use 10 concurrent workers
-- `-rate 5.0`: Limit to 5 requests per second in total
-- `-output results.json`: Save results to `results.json` and `results.html`
+- `-rate 10`: up to 10 requests per second in total
+- `-duration 5m`: give the crawl up to 5 minutes
+- `-output results.json`: write the results as JSON
+- `-html report.html`: write an HTML report with a response-time histogram
 
-### 3. View Results
-
-After running with `-output`, you'll get:
-- `results.json`: Machine-readable results
-- `results.html`: Interactive HTML report
-
-Open the HTML report in your browser:
-```bash
-open results.html  # macOS
-xdg-open results.html  # Linux
-```
-
-### 4. Configure Performance Targets
+### 3. Configure Performance Targets
 
 Create a configuration file `config.json`:
 
 ```json
 {
   "base_url": "http://localhost:3000",
-  "concurrency": 10,
-  "duration": "5m",
   "rate": 10.0,
   "output_file": "results.json",
   "performance_targets": {
-    "requests_per_second": 100,
-    "avg_response_time_ms": 50,
     "p95_response_time_ms": 100,
-    "p99_response_time_ms": 200,
-    "success_rate": 99.0,
-    "error_rate": 1.0
+    "success_rate": 99.0
   }
 }
 ```
@@ -98,18 +80,61 @@ Run with config:
 lobster -config config.json -allow-private-ips
 ```
 
-Lobster validates performance against configured targets and reports pass/fail status.
+A target left out, or set to 0, is not judged. Only `success_rate` (99%) is on by default.
+
+### 4. Add a Load Phase
+
+After a complete crawl, `-load` replays the pages it found at `-rate` for a set time:
+
+```bash
+lobster -url http://localhost:3000 -allow-private-ips -rate 50 -load 30s
+```
+
+Against a public host, or one whose robots.txt sets a `Crawl-delay`, Lobster also needs `-i-own-this` and `LOBSTER_I_OWN_THIS=<host>`. See [Configuration](configuration#load-phase).
 
 ## Understanding Results
 
-Console output has a summary (totals, success rate, average, minimum and maximum response time, a count of URLs per status code), then one PASS or FAIL line per performance target.
+The console shows the crawl's totals, success rate and response times (average, minimum, maximum, p95, p99), whether the crawl completed, a count of URLs per status code, the load phase if one ran, and one PASS or FAIL line per enabled target.
+
+```
+============================================================
+RESULTS
+============================================================
+Duration:             1.001655626s
+URLs Discovered:      21
+Total Requests:       21
+Successful Requests:  21
+Failed Requests:      0
+Average Response Time: 863.559µs
+Min Response Time:    257.549µs
+Max Response Time:    5.663142ms
+p95 / p99:            1.448154ms / 5.663142ms
+Requests/Second:      20.97
+Success Rate:         100.00%
+Crawl Complete:       yes
+
+------------------------------------------------------------
+URL VALIDATION SUMMARY
+------------------------------------------------------------
+HTTP 200: 21 URL(s)
+============================================================
+
+
+============================================================
+PERFORMANCE TARGET VALIDATION
+============================================================
+PASS Success Rate:                  100.00%
+    Target: ≥ 99.0%
+
+
+Overall: PASS (1/1 targets met)
+```
 
 **Key Metrics:**
-- **Success Rate**: share of requests that got an HTTP response, whatever its status (a 404 counts as a success; check the per-status counts)
-- **p95 Response Time**: 95% of requests were faster than this value
-- **Requests/Second**: total requests divided by the whole run duration; on a small site it stays low, so the default 100 req/s target fails
-
-The exit status does not reflect failed targets.
+- **Success Rate**: the percentage of requests that got a 200-399 status
+- **p95 / p99**: 95% (99%) of requests were at least this fast, to within about 9%
+- **Crawl Complete**: every discovered page was requested; an incomplete crawl fails the run
+- **Requests/Second**: requests divided by the crawl's duration; with `-load`, the load phase reports its achieved rate
 
 ## With Authentication
 
@@ -118,11 +143,11 @@ For authenticated endpoints, use environment variables:
 ```bash
 # Basic authentication
 export LOBSTER_AUTH_PASSWORD="secret"
-lobster -url https://api.example.com -auth-type basic -auth-username admin
+lobster -url http://localhost:3000 -allow-private-ips -auth-type basic -auth-username admin
 
 # Bearer token
 export LOBSTER_AUTH_TOKEN="your-api-token"
-lobster -url https://api.example.com -auth-type bearer
+lobster -url http://localhost:3000 -allow-private-ips -auth-type bearer
 ```
 
 See [Configuration](configuration) for all authentication options.

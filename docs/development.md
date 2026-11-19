@@ -7,52 +7,36 @@ nav_order: 6
 
 ## Project Overview
 
-**Lobster** crawls a site from a base URL, fetches each page it finds, and checks response times and success rate against performance targets.
+**Lobster** crawls a site from a base URL, fetches each page it finds, and checks response times and success rate against performance targets. With `-load`, it then replays the crawled pages open-loop at a fixed rate.
 
 **Repository**: https://github.com/1mb-dev/lobster
 **License**: MIT
 
 ## What Makes Lobster Different
 
-1. **Crawler-First**: Automatically discovers URLs (unlike ab, wrk, hey, vegeta)
-2. **Validation-Focused**: Pass/fail criteria vs raw metrics (unlike k6, JMeter)
-3. **Polite by default**: one goflow token bucket shared by all workers, robots.txt respected
-4. **Private base URLs refused**: localhost and private IPs need `-allow-private-ips`
+1. **Crawler-first**: discovers the URLs to check (ab, wrk, hey and vegeta take a URL list)
+2. **Pass/fail**: targets and an exit code, not only metrics
+3. **Polite by default**: one rate limit shared by all workers, robots.txt and its `Crawl-delay` respected
+4. **Guarded connections**: every dialed address is checked, redirects stay on the base origin, and a load against a public host needs an ownership acknowledgement
 
 ## Architecture
 
-### Package Layers
-
 ```
-cmd/lobster/            # CLI entry point, flag parsing
-  │
-internal/cli/           # CLI utilities, auth handling
-  │
-internal/config/        # Configuration loading and merging
-  │
-internal/domain/        # Core entities and types
-  │
-├── internal/crawler/   # URL discovery
-├── internal/tester/    # Load testing engine
-├── internal/reporter/  # Report generation
-├── internal/validator/ # Performance validation
-├── internal/robots/    # robots.txt parsing
-└── internal/util/      # Shared utilities (URL validation, sanitization)
+cmd/lobster/            # run(): flags, exit codes, crawl then optional load
+internal/cli/           # Flag registration, config building, auth, help text
+internal/config/        # Configuration file loading (strict keys, ${VAR} substitution)
+internal/domain/        # Config, results and their validation
+internal/crawler/       # Link extraction, same-host filter, deduplication
+internal/tester/        # Crawl: worker pool, rate limit, redirect policy, completeness
+internal/load/          # -load: open-loop schedule, ownership gate
+internal/stats/         # Fixed log-bucket histogram, nearest-rank percentiles
+internal/validator/     # Targets and the PASS/FAIL verdict
+internal/reporter/      # Console, JSON and HTML reports
+internal/robots/        # robots.txt parsing
+internal/util/          # Address checks, URL validation, sanitization
 ```
 
-### Component Responsibilities
-
-| Package | Purpose |
-|---------|---------|
-| `domain/` | Core business entities (TestResults, URLTask, Config) |
-| `crawler/` | URL discovery, link extraction, deduplication |
-| `tester/` | Load testing engine, worker pool, rate limiting |
-| `reporter/` | HTML/JSON/console report generation |
-| `validator/` | Performance target validation |
-| `config/` | Configuration file loading and merging |
-| `cli/` | CLI utilities, auth handling, stdin reading |
-| `robots/` | robots.txt parsing with wildcard support |
-| `util/` | URL validation, error sanitization |
+Flow: `crawler` → `tester` → (`load`) → `validator` + `reporter`.
 
 ## Development Workflow
 
@@ -61,103 +45,67 @@ internal/domain/        # Core entities and types
 ```bash
 git clone https://github.com/1mb-dev/lobster.git
 cd lobster
-go mod download
 make build
 ./lobster -url http://localhost:3000 -allow-private-ips
 ```
 
-See `Makefile` for all build targets: `make help`
+`make help` lists all build targets.
 
 ### Running Tests
 
 ```bash
-make test          # Fast tests only
-make test-verbose  # Full suite with output
-make coverage      # Coverage report
-make lint          # Run golangci-lint
+make test           # every package under the race detector, integration tests included
+make test-verbose   # the same, verbose
+make test-coverage  # coverage report
+make lint           # golangci-lint
 ```
 
-See [testing](testing) for the complete testing guide.
+See [testing](testing) for the testing guide.
 
 ## Key Implementation Details
 
-### Rate Limiting
+### Crawl
 
-Uses goflow's token bucket for smooth rate limiting:
+- One goflow token bucket with a burst of 1 spaces requests `1/-rate` apart across all workers; a robots.txt `Crawl-delay` lowers the rate to `1/delay`.
+- A pending counter tracks queued and in-flight URLs; the run ends when it reaches zero, or at the `-duration` deadline. The URL queue is never closed.
+- The crawl is complete when nothing is pending, no URL was dropped from a full queue, and no request was cut off by the deadline.
 
-```go
-rateLimiter, err = bucket.NewSafe(bucket.Limit(config.Rate), burst)
-if err := t.rateLimiter.Wait(ctx); err != nil {
-    // Handle cancellation
-}
-```
+### Load
 
-**Burst**: 2x the rate per second allows short bursts while maintaining overall limit.
+- Request `i` is due at `start + i/rate`; the schedule never waits for responses, and latency is measured from the due time.
+- Up to 256 requests are in flight; a request that waits for a slot is counted late.
+- Ten consecutive 429 or 5xx responses abort the load.
 
-### URL Discovery
+### Connection Safety
 
-```go
-// Pattern: href=["']([^"']+)["']
-// Handles: <a href="..."> extraction
-// Filters: javascript:, mailto:, # links
-// Resolves: Relative URLs to absolute
-// Dedupes: sync.Map for discovered URLs
-```
+- `util.DialControl` checks every address at dial time, after DNS resolution; there is no proxy.
+- The redirect policy follows only the base origin (or its http-to-https upgrade), at most 5 hops, and checks robots.txt again.
+- A load that needed no ownership acknowledgement also refuses public addresses at dial time.
 
-### Concurrent Testing
+### Metrics
 
-```go
-// Worker pool pattern
-for i := 0; i < concurrency; i++ {
-    wg.Add(1)
-    go t.worker(ctx, &wg)
-}
-
-// Thread-safe result collection
-validationsMutex.Lock()
-t.results.URLValidations = append(...)
-validationsMutex.Unlock()
-```
+Response times go into a fixed histogram of 224 log buckets (8 per octave), so memory does not grow with the number of requests. Percentiles use the nearest rank and report the upper bound of the bucket holding it: at most about 9% above the exact value.
 
 ## Key Dependencies
 
-**goflow** (v1.0.3)
-- Purpose: Token bucket rate limiting
-- Location: `internal/tester/tester.go`
+**goflow** (v1.6.0): token bucket rate limiting for the crawl (`internal/tester`).
 
 ## Common Tasks
 
-### Adding a Feature
+### Adding a Flag
 
-1. Update domain models in `internal/domain/`
-2. Implement logic in appropriate package (`tester/`, `crawler/`, etc.)
-3. Add tests achieving 70%+ coverage
-4. Update CLI flags in `cmd/lobster/main.go`
-5. Document in README.md and relevant docs
+1. Register it in `internal/cli/config.go` (`RegisterConfigFlags` and `flagSetters`), or in `cmd/lobster/main.go` if it is not part of the configuration.
+2. Add the field and its JSON key to `domain.Config`, and validate it in `Config.Validate`.
+3. Add it to the help text in `internal/cli/display.go` and to `docs/configuration.md`.
 
 ### Release Checklist
 
-1. Update version in `cmd/lobster/main.go`
-2. Update `CHANGELOG.md` with changes
-3. Run all tests: `go test ./...`
-4. Build for all platforms
-5. Create git tag: `git tag -a vX.Y.Z -m "Release vX.Y.Z"`
-6. Push tag: `git push origin vX.Y.Z`
-7. Create GitHub release with binaries
+1. Update `CHANGELOG.md`.
+2. `make ci` passes.
+3. Merge to `main`; wait for CI to pass on the merge commit.
+4. Tag: `git tag -a vX.Y.Z -m "vX.Y.Z"` and push the tag.
 
-## Key Files
-
-```
-cmd/lobster/main.go      # CLI entry point
-internal/cli/            # CLI utilities
-internal/tester/         # Core testing engine
-internal/crawler/        # URL discovery
-internal/reporter/       # Report generation
-internal/domain/         # Business entities
-internal/util/           # URL validation, sanitization
-Makefile                 # Build targets
-.golangci.yml            # Linter config
-```
+`-version` reads the version from the build: `make build` passes `git describe` through ldflags, and `go install` records the module version.
 
 ## Git Workflow
 
@@ -165,45 +113,37 @@ Makefile                 # Build targets
 
 ```
 type(scope): description
-
-[optional body]
-
-[optional footer]
 ```
 
-**Types**: feat, fix, docs, style, refactor, test, chore
+**Types**: feat, fix, docs, refactor, test, chore, perf
 
 **Examples**:
 ```
-feat(auth): add cookie-based authentication support
-fix(crawler): handle malformed URLs gracefully
+feat(load): add the ownership gate
+fix(crawler): normalize an empty path to /
 docs(readme): update installation instructions
 ```
 
 ### Branch Strategy
 
-- `main`: Stable, releasable code
-- `feature/*`: New features
-- `fix/*`: Bug fixes
-- `docs/*`: Documentation updates
+- `main`: stable, releasable code
+- `feat/*`, `fix/*`, `docs/*`: work branches
 
 ## Troubleshooting
 
-### Out of Memory
-**Symptoms**: Process killed, OOM errors
-**Fix**: Reduce `-max-depth`, lower `-queue-size`, or use `-dry-run` to preview URL count first
+### The crawl is incomplete
+**Symptom**: `Crawl Complete: no (duration)` or `(queue_full)`
+**Fix**: raise `-duration` or `-rate` for `duration`; raise `-queue-size` for `queue_full`
 
-### High Error Rate
-**Symptoms**: Many 429 or timeout errors
-**Fix**: Reduce `-concurrency`, lower `-rate`, increase `-timeout`
+### Many 429 or timeout errors
+**Fix**: lower `-rate`, raise `-timeout`
 
-### No URLs Discovered
-**Symptoms**: Only tests base URL
-**Fix**: Check HTML has `<a>` links, verify `-follow-links=true`, ensure same domain
+### Only the base page is fetched
+**Fix**: check that the page has `<a href>` links to the same host, and that `-max-depth` is above 0
 
 ## Resources
 
-- [goflow docs](https://github.com/1mb-dev/goflow)
+- [goflow](https://github.com/1mb-dev/goflow)
 - [Go testing](https://go.dev/doc/tutorial/add-a-test)
 - [Semantic versioning](https://semver.org/)
 
@@ -211,4 +151,4 @@ docs(readme): update installation instructions
 
 - **Issues**: https://github.com/1mb-dev/lobster/issues
 - **Discussions**: https://github.com/1mb-dev/lobster/discussions
-- **Pull Requests**: Welcome! See [contributing](contributing)
+- **Pull Requests**: see [contributing](contributing)

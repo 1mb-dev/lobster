@@ -154,17 +154,19 @@ lobster/
 │   ├── config/            # Configuration file loading
 │   ├── crawler/           # URL discovery
 │   ├── domain/            # Core entities
+│   ├── load/              # -load phase and ownership gate
 │   ├── reporter/          # Console, JSON and HTML reports
 │   ├── robots/            # robots.txt parsing
-│   ├── tester/            # Worker pool, rate limiting, requests
-│   ├── util/              # URL validation, sanitization
-│   └── validator/         # Performance target validation
+│   ├── stats/             # Response-time histogram, percentiles
+│   ├── tester/            # Crawl: worker pool, rate limit, redirect policy
+│   ├── util/              # Address checks, URL validation, sanitization
+│   └── validator/         # Performance targets and verdict
 ├── docs/                  # Documentation site
 ├── examples/              # Example configurations
 └── README.md
 ```
 
-Flow: crawler → tester → validator + reporter; `domain` holds the config and result types.
+Flow: crawler → tester → (load) → validator + reporter; `domain` holds the config and result types.
 
 ## Getting Help
 

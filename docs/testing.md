@@ -66,36 +66,22 @@ func TestValidation(t *testing.T) {
 }
 ```
 
-## Coverage Goals
-
-Target coverage by package:
-
-- Overall: 70%+ (currently 30.2%)
-- Critical packages: tester 86.9%, reporter TBD, validator 51.2%
-- Domain models: 100%
-- Utility packages: 90%+
-
-Run coverage reports:
+## Coverage
 
 ```bash
-# Fast tests only (skips slow integration tests)
-go test -short ./... -cover
-
-# Full test suite (includes slow tests)
-go test ./... -cover
-
-# Detailed coverage report
-go test ./... -coverprofile=coverage.out
-go tool cover -html=coverage.out
+make test-coverage        # per-function coverage and the total
+make test-coverage-html   # browsable report
 ```
+
+Aim for 70% or more overall, and cover every error path a user can reach (refused URLs, cancelled requests, 429 backoff).
 
 ### What to Test
 
 - Business logic and algorithms
-- Error handling paths (HTTP 429 retry, context cancellation, etc.)
+- Error handling paths (HTTP 429 retry, context cancellation, refused connections and redirects)
 - Edge cases and boundary conditions
 - Public APIs and exported functions
-- Critical user workflows (crawl → test → report)
+- Critical user workflows (crawl → load → verdict → report)
 
 ### What Not to Test
 
@@ -105,80 +91,29 @@ go tool cover -html=coverage.out
 
 ## Running Tests
 
-### Run All Tests
-
 ```bash
-# Fast tests only (recommended for development)
-go test -short ./...
-
-# Full test suite including slow integration tests
-go test ./...
+make test                                    # all packages, race detector, integration tests included
+go test ./internal/tester -v                 # one package
+go test ./internal/tester -run TestRedirect  # matching tests
+go test ./cmd/lobster -run TestRun_JSONKeysMatchGolden -update   # regenerate the JSON key golden files
 ```
 
-### Run Tests with Coverage
-
-```bash
-go test -short ./... -cover
-```
-
-### Run Tests with Race Detector
-
-```bash
-go test -short ./... -race
-```
-
-### Run Specific Package
-
-```bash
-go test ./internal/tester -v
-```
-
-### Run Specific Test
-
-```bash
-go test ./internal/tester -run TestProcessURL
-```
+`make test` runs every test, integration tests included; only two slow tester tests skip under `go test -short`. Tests use `httptest` servers only, never real endpoints.
 
 ## Test Categories
 
 ### Unit Tests
-Fast, isolated tests of individual functions. See `internal/tester/tester_test.go` for examples.
+Fast, isolated tests of single functions, such as `internal/stats` and `internal/util`.
 
 ### Integration Tests
-End-to-end tests with real HTTP servers. Use `testing.Short()` to skip in fast mode:
+Runs against `httptest` servers: `internal/tester/integration_test.go`, `internal/tester/accounting_test.go`, `internal/load/load_test.go`.
 
-```go
-func TestIntegration_FullWorkflow(t *testing.T) {
-    if testing.Short() {
-        t.Skip("Skipping integration test in short mode")
-    }
-    // ... test code
-}
-```
+### Contract Tests
+`cmd/lobster/main_test.go` runs the whole command through `run()` and checks exit codes, output and the JSON keys against `cmd/lobster/testdata/*.golden`.
 
-### Slow Tests
-Tests taking >2 seconds (rate limiting, slow requests). Always skipped with `-short` flag.
+### Timing Tests
+Some tests measure rates and deadlines on real clocks (the rate, Crawl-delay and load tests) and take a few seconds each.
 
 ## Continuous Integration
 
-CI pipeline (in progress):
-- Run fast tests: `go test -short ./...`
-- Check coverage
-- Run linters: `golangci-lint run`
-
-## Current Test Suite
-
-**Package Coverage** (as of last run):
-- `internal/tester`: 86.9%
-- `internal/config`: 95.2%
-- `internal/crawler`: 94.9%
-- `internal/validator`: 51.2%
-- `internal/domain`: 100%
-- **Overall**: 30.2%
-
-**Test Breakdown**:
-- Unit tests: ~50 tests
-- Integration tests: 6 tests (skipped with `-short`)
-- Slow tests: 2 tests (skipped with `-short`)
-
-Run `go test -short ./... -cover` to verify current coverage.
+CI runs the shared 1mb-dev Go workflow: lint, `go test -race ./...` on two Go versions, gitleaks, govulncheck and a build.

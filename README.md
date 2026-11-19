@@ -4,16 +4,17 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/1mb-dev/lobster/v2.svg)](https://pkg.go.dev/github.com/1mb-dev/lobster/v2)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Lobster** crawls a site you own from a base URL, fetches each page it finds, and checks response times and success rate against performance targets, with a pass or fail line for each.
+**Lobster** crawls a site you own from a base URL, fetches each page it finds, and checks response times and success rate against performance targets. With `-load`, it then replays the pages it found at a fixed rate. The run passes or fails, and the exit code says which.
 
 ## Features
 
 - **URL discovery**: follows same-host `<a href>` links up to `-max-depth`
-- **Pass/fail per target**: success and error rate, average, p95 and p99 response time, requests per second
-- **Rate limiting**: one token bucket ([goflow](https://github.com/1mb-dev/goflow)) shared by all workers
-- **Reports**: console summary; JSON and HTML files with `-output`
+- **Pass/fail per target**: success rate, average, p95 and p99 response time, and requests per second under `-load`; exit code 0 on pass, 1 on fail
+- **Load phase**: `-load` replays the crawled pages open-loop at `-rate`, measuring latency from each request's scheduled send time
+- **Rate limiting**: one token bucket ([goflow](https://github.com/1mb-dev/goflow)) shared by all workers; robots.txt `Crawl-delay` lowers it
+- **Reports**: console summary; JSON with `-output`, HTML with `-html`
 - **robots.txt**: respected by default
-- **Private base URLs refused**: localhost and private IPs need `-allow-private-ips`
+- **Private addresses refused**: every connection is checked, redirects stay on the base host; localhost and private IPs need `-allow-private-ips`
 - **Credentials**: from environment variables or stdin, never flag values
 
 ## Quick Start
@@ -46,7 +47,13 @@ Check a public site you own:
 lobster -url https://example.com -duration 30s
 ```
 
-Lobster prints a summary when the run ends. Add `-output results.json` to also write `results.json` and `results.html`.
+Lobster prints a summary when the crawl ends. Add `-output results.json` for JSON, `-html report.html` for an HTML report.
+
+Crawl, then replay the pages found at 50 req/s for 30 seconds:
+
+```bash
+lobster -url http://localhost:3000 -allow-private-ips -rate 50 -load 30s
+```
 
 ### With Authentication
 
@@ -72,19 +79,56 @@ Full reference: [Configuration Guide](https://1mb-dev.github.io/lobster/configur
 
 ## How It Works
 
-- **What it does:** starting at the base URL, Lobster follows same-host `<a href>` links up to `-max-depth`, fetches each page it finds once through the shared rate limit, and records each status code and response time.
-- **What it does not do:** it runs no JavaScript, follows no links to other hosts, and skips pages robots.txt disallows (unless `-ignore-robots`). The run continues until `-duration` ends, even after the last page is fetched, and the exit status does not reflect failed targets.
-- **How to read results:** the summary gives totals, success rate and average, minimum and maximum response time; the validation section then gives one PASS or FAIL line per performance target, p95 and p99 included. Success rate counts any HTTP response, 404 included. Requests per second is total requests divided by the whole run duration, so the default 100 req/s target fails on a small site.
+1. **Crawl.** Starting at the base URL, Lobster follows same-host `<a href>` links up to `-max-depth` and fetches each page once, at most `-rate` requests per second. It skips pages robots.txt disallows and runs no JavaScript. The crawl ends when every page has been fetched; `-duration` is its time limit. A crawl cut short by `-duration` or a full queue is incomplete, and the run fails.
+2. **Load (optional).** With `-load 30s`, after a complete crawl, Lobster sends one request every `1/-rate` seconds to the crawled pages in turn. Requests go out on schedule however slowly the server responds, so a slow server shows in the latency rather than lowering the rate. A public host needs an ownership acknowledgement; see [Configuration](https://1mb-dev.github.io/lobster/configuration#load-phase).
+3. **Verdict.** Each enabled target gets a PASS or FAIL line. Only the success-rate target (99%) is on by default. Exit code 0 means every target passed and the crawl completed; 1 means a target failed, the crawl was incomplete, or the load aborted; 2 means a usage, configuration or safety refusal.
 
 ## Reports
 
-- **Console:** totals, success rate, response times, a count of URLs per status code, then a PASS or FAIL line per performance target.
-- **JSON** (`-output results.json`): the same metrics plus per-URL results, for scripts.
-- **HTML:** written beside the JSON file with the same name (`results.html`): response status and response-time charts, per-URL table, errors and slow requests.
+Console output from a crawl of a local 21-page site:
+
+```
+============================================================
+RESULTS
+============================================================
+Duration:             1.001655626s
+URLs Discovered:      21
+Total Requests:       21
+Successful Requests:  21
+Failed Requests:      0
+Average Response Time: 863.559µs
+Min Response Time:    257.549µs
+Max Response Time:    5.663142ms
+p95 / p99:            1.448154ms / 5.663142ms
+Requests/Second:      20.97
+Success Rate:         100.00%
+Crawl Complete:       yes
+
+------------------------------------------------------------
+URL VALIDATION SUMMARY
+------------------------------------------------------------
+HTTP 200: 21 URL(s)
+============================================================
+
+
+============================================================
+PERFORMANCE TARGET VALIDATION
+============================================================
+PASS Success Rate:                  100.00%
+    Target: ≥ 99.0%
+
+
+Overall: PASS (1/1 targets met)
+```
+
+- **JSON** (`-output results.json`): the same metrics, per-URL results, a response-time histogram, the load phase if one ran, and `performance_validation.overall_status` (`PASS` or `FAIL`).
+- **HTML** (`-html report.html`): summary cards, status counts, per-URL table, errors, slow requests and a response-time histogram, with no external scripts.
 
 ## Use Cases
 
 - Checking that every linked page on a site you own responds, and how fast
+- Failing a deployment pipeline step when a page breaks or slows down (exit code 1)
+- Replaying a site's pages at a fixed rate against a staging host you own
 - Comparing response times before and after a change
 
 ## Documentation

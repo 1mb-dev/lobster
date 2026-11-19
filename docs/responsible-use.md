@@ -93,15 +93,16 @@ lobster -url https://myapp.com -ignore-robots  # ⚠️ Use only on your own sys
 # Good: Reasonable rate for most applications
 lobster -url https://example.com -rate 5 -concurrency 10
 
-# Bad: Aggressive settings that could cause service disruption
-lobster -url https://example.com -rate 1000 -concurrency 500  # ⚠️ DoS-like behavior
+# Bad: a high load rate against a host you have not cleared with its operators
+lobster -url https://example.com -rate 1000 -load 10m  # ⚠️ refused without -i-own-this
 ```
 
 **Guidelines**:
-- Start with low concurrency (5-10) and gradually increase
+- Start with a low `-rate` and raise it gradually; it is the total for all workers
 - Monitor server health during testing
-- Respect HTTP 429 (Too Many Requests) responses (enabled by default)
-- Use dry-run mode first to understand request volume: `-dry-run`
+- HTTP 429 responses back the crawl off (always on); during `-load`, 10 consecutive 429 or 5xx responses stop the load
+- Crawl first to see how many pages a load would replay: the crawl ends once every page has been fetched
+- A `-load` against a public host, or one whose robots.txt sets a `Crawl-delay`, needs `-i-own-this` and `LOBSTER_I_OWN_THIS=<host>`: set them only for a host you own
 
 ### 3. Test Non-Production Environments
 
@@ -173,7 +174,7 @@ During testing:
 6. **Ignoring Server Responses**
    - Don't continue testing when receiving 429 (rate limit) responses
    - Don't ignore 503 (service unavailable) responses
-   - Don't disable `-respect-429` without good reason
+   - Don't rerun an aborted `-load` at the same rate
 
 ## Data Privacy and Security
 

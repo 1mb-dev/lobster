@@ -5,146 +5,141 @@ nav_order: 3
 
 # Configuration Reference
 
-Complete reference for all Lobster configuration options, including CLI flags, configuration files, and environment variables.
+Lobster is configured with CLI flags, a JSON configuration file, and environment variables for credentials. `lobster -help` lists every flag.
 
-## Overview
+## How a configuration is built
 
-Lobster can be configured through:
-1. **CLI flags** - Highest priority, override all other sources
-2. **Environment variables** - For sensitive data like credentials
-3. **Configuration file** - JSON format for persistent settings
-4. **Defaults** - Sensible defaults when no other value is provided
+1. **Defaults**, listed in the tables below.
+2. **Configuration file** (`-config`): each key in the file replaces its default; a key left out keeps it. An unknown key is an error.
+3. **CLI flags**: a flag replaces the file's value only when it is set on the command line.
+4. **Validation**: an invalid value stops the run with exit code 2 before any request is sent.
+
+```bash
+# The file sets concurrency 5; the flag overrides it with 20
+lobster -config config.json -concurrency 20
+```
 
 ## CLI Flags
 
-### Core Options
+### Crawl
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `-url` | string | (required) | Base URL to test |
+| `-url` | string | `http://localhost:3000` | Base URL to crawl |
 | `-concurrency` | int | 5 | Number of concurrent workers |
-| `-duration` | string | "2m" | Test duration (e.g., "30s", "5m", "1h") |
-| `-timeout` | string | "30s" | HTTP request timeout |
+| `-duration` | duration | 2m | Time limit for the crawl; the run ends sooner when every page has been fetched |
+| `-timeout` | duration | 30s | HTTP request timeout |
 | `-rate` | float | 2.0 | Requests per second, shared by all workers (minimum 0.1) |
-| `-user-agent` | string | "Lobster/1.0" | User-Agent header for requests |
-
-### Crawling Options
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `-follow-links` | bool | true | Discover and follow links from HTML pages |
-| `-max-depth` | int | 3 | Maximum crawl depth |
+| `-max-depth` | int | 3 | Maximum crawl depth; 0 fetches the base page only |
 | `-queue-size` | int | 10000 | URL queue buffer size |
+| `-user-agent` | string | `lobster/<version>` | User-Agent header |
 | `-ignore-robots` | bool | false | Ignore robots.txt directives |
 
-### Request Behavior
+### Load
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `-respect-429` | bool | true | Respect HTTP 429 with exponential backoff |
-| `-dry-run` | bool | false | Discover URLs without making test requests |
+| `-load` | duration | none | After a complete crawl, replay the crawled URLs at `-rate` for this long |
+| `-i-own-this` | bool | false | Confirm you own the `-load` target; also needs `LOBSTER_I_OWN_THIS=<host>` |
 
-### Security Options
+### Safety
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `-insecure-skip-verify` | bool | false | Skip TLS certificate verification (requires `LOBSTER_INSECURE_TLS=true`) |
-| `-allow-private-ips` | bool | false | Allow private/localhost IPs (bypasses SSRF protection) |
+| `-allow-private-ips` | bool | false | Allow a localhost or private-IP target |
+| `-insecure-skip-verify` | bool | false | Skip TLS certificate verification; also needs `LOBSTER_INSECURE_TLS=true` |
 
-### Authentication Flags
+### Authentication
 
 | Flag | Type | Description |
 |------|------|-------------|
-| `-auth-type` | string | Authentication type: `basic`, `bearer`, `cookie`, `header` |
+| `-auth-type` | string | `basic`, `bearer`, `cookie` or `header` |
 | `-auth-username` | string | Username for basic authentication |
-| `-auth-password-stdin` | bool | Read password from stdin (one line) |
-| `-auth-token-stdin` | bool | Read bearer token from stdin (one line) |
-| `-auth-header` | string | Custom header in "Name:Value" format |
+| `-auth-password-stdin` | bool | Read the password from stdin (one line) |
+| `-auth-token-stdin` | bool | Read the bearer token from stdin (one line) |
+| `-auth-header` | string | Custom header name; the value comes from `LOBSTER_AUTH_HEADER` or `-auth-header-stdin` |
+| `-auth-header-stdin` | bool | Read the `-auth-header` value from stdin (one line) |
 
-### Output Options
+Only one of the three `-*-stdin` flags can be used per run.
+
+### Output
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `-output` | string | "" | JSON results file; an HTML report with the same name and `.html` is written beside it |
-| `-verbose` | bool | false | Enable verbose JSON logging |
-| `-no-progress` | bool | false | Disable progress bar updates |
-| `-compare` | string | "" | Compare against target (e.g., "Ghost", "WordPress") |
+| `-output` | string | none | JSON results file |
+| `-html` | string | none | HTML report file |
+| `-verbose` | bool | false | Verbose structured logging |
+| `-no-progress` | bool | false | Disable the progress line |
 
-### Other Flags
+### Other
 
 | Flag | Description |
 |------|-------------|
-| `-config` | Path to configuration file (JSON) |
-| `-version` | Show version information |
-| `-help` | Show help message |
+| `-config` | Path to a JSON configuration file |
+| `-version` | Show the version |
+| `-help` | Show the help message |
 
 ## Environment Variables
 
-Environment variables are used for sensitive configuration that shouldn't appear in command-line arguments (which are visible in process lists).
+Secrets are read from the environment or stdin, never from flag values, which show in process lists and shell history.
 
-| Variable | Description | Required For |
-|----------|-------------|--------------|
-| `LOBSTER_AUTH_PASSWORD` | Password for basic authentication | Basic auth |
-| `LOBSTER_AUTH_TOKEN` | Bearer token for API authentication | Bearer auth |
-| `LOBSTER_AUTH_COOKIE` | Cookie value for session authentication | Cookie auth |
-| `LOBSTER_INSECURE_TLS` | Set to "true" to allow `--insecure-skip-verify` | Insecure TLS |
+| Variable | Description |
+|----------|-------------|
+| `LOBSTER_AUTH_PASSWORD` | Password for basic authentication |
+| `LOBSTER_AUTH_TOKEN` | Bearer token |
+| `LOBSTER_AUTH_COOKIE` | Cookie, as `name=value` |
+| `LOBSTER_AUTH_HEADER` | Value for the `-auth-header` header |
+| `LOBSTER_INSECURE_TLS` | Must be `true` for `-insecure-skip-verify` |
+| `LOBSTER_I_OWN_THIS` | Must equal the target's host name for a `-load` that needs acknowledgement |
 
-### Secure Credential Handling
-
-Credentials are **never** passed as CLI flags to prevent exposure in:
-- Process listings (`ps aux`)
-- Shell history
-- Log files
-
-Instead, use:
 ```bash
-# Via environment variables
+# Password from the environment
 export LOBSTER_AUTH_PASSWORD="secret"
-lobster -url https://example.com -auth-type basic -auth-username admin
+lobster -url http://localhost:3000 -allow-private-ips -auth-type basic -auth-username admin
 
-# Via stdin
-echo "secret" | lobster -url https://example.com -auth-type basic -auth-username admin -auth-password-stdin
+# API key header, value from stdin
+vault kv get -field=key secret/api | \
+  lobster -url https://example.com -auth-type header -auth-header X-API-Key -auth-header-stdin
 ```
 
 ## Configuration File
 
-Create a JSON configuration file for persistent settings:
-
 ```json
 {
-  "base_url": "https://example.com",
+  "base_url": "http://localhost:3000",
   "concurrency": 10,
   "duration": "5m",
   "timeout": "30s",
-  "rate": 5.0,
-  "user_agent": "Lobster/1.0",
-  "follow_links": true,
+  "rate": 10.0,
   "max_depth": 3,
   "queue_size": 10000,
-  "respect_429": true,
-  "dry_run": false,
-  "verbose": false,
+  "load": "",
+  "user_agent": "",
   "ignore_robots": false,
-  "output_file": "results.html",
+  "insecure_skip_verify": false,
+  "verbose": false,
+  "output_file": "results.json",
+  "html_file": "report.html",
   "auth": {
     "type": "basic",
     "username": "admin",
     "password": "${LOBSTER_AUTH_PASSWORD}"
   },
   "performance_targets": {
-    "requests_per_second": 100,
-    "avg_response_time_ms": 50,
+    "requests_per_second": 0,
+    "avg_response_time_ms": 0,
     "p95_response_time_ms": 100,
-    "p99_response_time_ms": 200,
-    "success_rate": 99.0,
-    "error_rate": 1.0
+    "p99_response_time_ms": 0,
+    "success_rate": 99.0
   }
 }
 ```
 
+An empty `load` means no load phase; an empty `user_agent` means `lobster/<version>`.
+
 ### Environment Variable Substitution
 
-Configuration files support `${VAR_NAME}` syntax for environment variable substitution:
+`${VAR_NAME}` in the file is replaced with the variable's value; `${VAR_NAME:-default}` falls back to a default. An unset variable without a default is an error.
 
 ```json
 {
@@ -155,137 +150,97 @@ Configuration files support `${VAR_NAME}` syntax for environment variable substi
 }
 ```
 
-Usage:
-```bash
-export API_TOKEN="your-secret-token"
-lobster -config config.json
-```
-
 ### Auth Configuration Options
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `type` | string | Auth type: `basic`, `bearer`, `cookie`, `header` |
+| `type` | string | `basic`, `bearer`, `cookie` or `header` |
 | `username` | string | Username for basic auth |
 | `password` | string | Password (use `${ENV_VAR}`) |
 | `token` | string | Bearer token (use `${ENV_VAR}`) |
-| `cookies` | object | Key-value pairs for cookie auth |
-| `headers` | object | Key-value pairs for header auth |
-| `cookie_file` | string | Path to Netscape-format cookie file |
+| `cookies` | object | Name-value pairs for cookie auth |
+| `headers` | object | Name-value pairs for header auth |
+| `cookie_file` | string | Path to a Netscape-format cookie file |
 
 ### Performance Targets
 
-Define pass/fail thresholds for automated testing:
+A target of 0 is off. Only `success_rate` is on by default.
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `requests_per_second` | float | 100 | Minimum acceptable throughput |
-| `avg_response_time_ms` | float | 50 | Maximum average response time |
-| `p95_response_time_ms` | float | 100 | Maximum 95th percentile response time |
-| `p99_response_time_ms` | float | 200 | Maximum 99th percentile response time |
-| `success_rate` | float | 99.0 | Minimum success rate percentage |
-| `error_rate` | float | 1.0 | Maximum error rate percentage |
+| Field | Default | Passes when |
+|-------|---------|-------------|
+| `success_rate` | 99.0 | the percentage of requests with a 200-399 status is at least this |
+| `avg_response_time_ms` | 0 (off) | the average response time is at most this |
+| `p95_response_time_ms` | 0 (off) | the 95th-percentile response time is at most this |
+| `p99_response_time_ms` | 0 (off) | the 99th-percentile response time is at most this |
+| `requests_per_second` | 0 (off) | the `-load` phase's achieved rate is at least this; skipped without `-load` |
 
-## Precedence
+Percentiles use the nearest-rank method over a histogram whose buckets are about 9% wide, so a reported percentile is at most one bucket above the exact value.
 
-Configuration values are merged in this order (later overrides earlier):
+With `-load`, the latency and success-rate targets judge the load phase, and the crawl is judged by its own success rate.
 
-1. **Defaults** - Built-in sensible defaults
-2. **Configuration file** - Values from `-config` file
-3. **Environment variables** - For credentials and sensitive settings
-4. **CLI flags** - Highest priority, always wins
+## Exit Codes
 
-Exception: the boolean settings `follow_links`, `respect_429`, `dry_run`, `verbose`, `insecure_skip_verify` and `ignore_robots` always take the flag's value, default included, so setting them in the file has no effect. Set them as flags.
+| Code | Meaning |
+|------|---------|
+| 0 | The crawl completed and every enabled target passed |
+| 1 | A target failed, the crawl was incomplete, or the load phase aborted |
+| 2 | Usage or configuration error, a refused base URL, a refused `-load`, or a runtime error |
 
-Example:
+The JSON report's `performance_validation.overall_status` is `PASS` or `FAIL`, matching exit codes 0 and 1.
+
 ```bash
-# Config file sets concurrency=5
-# CLI flag overrides to concurrency=20
-lobster -config config.json -concurrency 20
+lobster -url http://localhost:3000 -allow-private-ips -config targets.json -no-progress
+echo "exit code: $?"
+```
+
+A crawl is complete when every discovered URL was requested: none dropped from a full queue (raise `-queue-size`) and none cut off by `-duration` (raise `-duration` or `-rate`). The JSON report gives `crawl_complete` and, when it is false, `incomplete_reason`.
+
+## Load Phase
+
+`-load 30s` runs after a complete crawl. It sends one request every `1/-rate` seconds to the crawled URLs in turn:
+
+- Requests go out on schedule however slowly the server responds, and latency is measured from each request's scheduled send time, so a slow server shows in the latency instead of lowering the rate.
+- At most 256 requests are in flight; a request that waits for a free slot is counted as late.
+- 429 responses are not retried. After 10 consecutive 429 or 5xx responses the load stops, and the run exits 1.
+- `-rate` is capped at 1000 with `-load`. `-concurrency` applies to the crawl only.
+
+A load against a host that resolves to a public address, or whose robots.txt sets a `Crawl-delay`, needs both `-i-own-this` and `LOBSTER_I_OWN_THIS` set to the host name. `-allow-private-ips` does not count. A load that needs neither can connect only to private addresses.
+
+```bash
+LOBSTER_I_OWN_THIS=staging.example.com lobster -url https://staging.example.com \
+  -rate 50 -load 1m -i-own-this -output results.json
 ```
 
 ## Examples
-
-### Basic Usage
 
 ```bash
 # Local application with defaults
 lobster -url http://localhost:3000 -allow-private-ips
 
-# Custom duration and concurrency
-lobster -url http://localhost:3000 -allow-private-ips -duration 5m -concurrency 10
+# Base page only
+lobster -url http://localhost:3000 -allow-private-ips -max-depth 0
 
-# Rate-limited run against a public site you own
-lobster -url https://example.com -rate 10 -duration 2m
-```
+# Faster crawl with a longer time limit, JSON and HTML reports
+lobster -url http://localhost:3000 -allow-private-ips -rate 10 -duration 5m \
+  -output results.json -html report.html
 
-### With Authentication
-
-```bash
-# Basic authentication
-export LOBSTER_AUTH_PASSWORD="secret"
-lobster -url https://api.example.com -auth-type basic -auth-username admin
-
-# Bearer token authentication
-export LOBSTER_AUTH_TOKEN="your-api-token"
-lobster -url https://api.example.com -auth-type bearer
-
-# Read token from stdin (e.g., from vault)
-vault kv get -field=token secret/api | \
-  lobster -url https://api.example.com -auth-type bearer -auth-token-stdin
-```
-
-### URL Discovery (Dry Run)
-
-```bash
-# Discover URLs without timing requests
-lobster -url https://example.com -dry-run -max-depth 5 -output urls.json
-```
-
-### Testing Internal Services
-
-```bash
-# Allow localhost/private IPs (development only!)
-lobster -url http://localhost:3000 -allow-private-ips
-
-# Skip TLS verification for self-signed certs
+# Internal service with a self-signed certificate
 export LOBSTER_INSECURE_TLS=true
 lobster -url https://dev.internal:8443 -insecure-skip-verify -allow-private-ips
 ```
 
-## Performance Tuning
+## Tuning
 
-### Concurrency
+### Rate and Concurrency
 
-- **Low concurrency (1-5)**: Gentle testing, accurate latency measurements
-- **Medium (10-20)**: Balanced load testing
-- **High (50+)**: may saturate the client's network or CPU
+`-rate` is one limit shared by all workers, with a burst of 1: requests are spaced `1/-rate` seconds apart whatever `-concurrency` is. A robots.txt `Crawl-delay` lowers the crawl's rate to one request per delay. Below 1.0 req/s, Lobster asks for confirmation on a terminal.
 
-### Rate Limiting
-
-- **Rate < 1**: Sub-request-per-second (e.g., 0.5 = one request every 2 seconds); the minimum is 0.1
-- **Rate >= 1**: Requests per second across all workers
-
-The limit is global: after an initial burst of up to twice `-rate`, total requests per second stays at `-rate`, whatever `-concurrency` is.
+More workers help when responses are slow: with a 1s response time and `-rate 10`, about 10 workers keep the rate.
 
 ### Queue Size
 
-Default 10,000 is suitable for most sites. Increase for:
-- Large sites with many pages
-- Deep crawling (`-max-depth` > 5)
-
-Watch for "URLs dropped due to queue overflow" warning.
-
-### Memory Considerations
-
-- Each queued URL uses ~80 bytes
-- Queue of 100,000 URLs ≈ 8MB
-- Response times are stored for percentile calculation
-- Consider `-max-depth` to limit crawl scope
+The default of 10,000 suits most sites. If the run reports `incomplete_reason: queue_full`, raise `-queue-size`.
 
 ### robots.txt
 
-By default, Lobster respects `robots.txt`. Use `-ignore-robots` only when:
-- You own the target site
-- You have explicit permission
-- Testing internal services with no robots.txt
+Lobster respects robots.txt by default, and checks it again on every redirect. Use `-ignore-robots` only when you own the site or have explicit permission.

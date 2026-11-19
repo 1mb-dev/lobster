@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-20
+
+### Added
+
+- `-load <duration>`: after a complete crawl, replays the crawled URLs open-loop at `-rate`, up to 256 in flight, with latency measured from each request's scheduled send time; stops after 10 consecutive 429/5xx responses
+- `-load` ownership gate: a public host, or a robots.txt `Crawl-delay`, needs `-i-own-this` and `LOBSTER_I_OWN_THIS=<host>`
+- `-html <path>` writes the HTML report, with no external scripts
+- `LOBSTER_AUTH_HEADER` and `-auth-header-stdin` supply the `-auth-header` value
+- Exit codes: 0 pass; 1 a failed target, an incomplete crawl or an aborted load; 2 a usage, configuration or safety refusal, or a runtime error
+- JSON keys `crawl_complete`, `incomplete_reason`, `abandoned_requests`, `robots_blocked`, `urls_dropped`, `p95_response_time`, `p99_response_time`, `response_time_histogram` and `load`
+- robots.txt `Crawl-delay` lowers the crawl rate to one request per delay
+
+### Changed
+
+- A run ends when the crawl completes; `-duration` is the crawl's time limit
+- Only a 200-399 status counts as success
+- The verdict under `overall_status` is PASS or FAIL; an incomplete crawl fails
+- Only the success-rate target (99%) is on by default; a target of 0 is off; the requests-per-second target is judged only with `-load`
+- Targets compare inclusively (success rate ≥ target, latency ≤ target); percentiles use the nearest-rank method
+- Response times are counted in a fixed log-bucket histogram; reported percentiles are within one bucket (about 9%) of the exact value
+- `-rate` is one limit shared by all workers, with a burst of 1
+- `-rate` below 0.1, `-rate` above 1000 with `-load`, `-concurrency 0` and zero durations are refused instead of adjusted
+- `-max-depth 0` fetches the base page only
+- Config files refuse unknown keys; a key absent from the file keeps its default; a flag overrides the file only when set
+- `-auth-header` takes the header name only
+- The default user agent is `lobster/<version>`; `-version` reports the module version
+- URLs robots.txt disallows, and URLs beyond `-max-depth`, are no longer counted as requests; requests cut off by `-duration` count as abandoned
+- `-output` writes the JSON file only
+
+### Removed
+
+- `-dry-run`, `-follow-links`, `-respect-429` (429 backoff is always on) and `-compare`
+- Config keys `follow_links`, `respect_429`, `dry_run` and `error_rate`
+- The error-rate target and the three-tier verdicts
+- The per-request `response_times` list in the JSON report
+
+### Security
+
+- Every connection's address is checked when it is dialed, so a hostname that resolves or rebinds to a private address is refused; IPv4-mapped, NAT64, 6to4, Teredo, 198.18.0.0/15 and `.localhost` addresses are covered
+- Redirects stay on the base URL's origin (or its http-to-https upgrade), at most 5, and robots.txt is checked again; a refused redirect of the base URL exits 2 and names the target
+- robots.txt is fetched through the crawl's connection checks, and no proxy is used
+- A `-load` that needed no ownership acknowledgement can connect only to private addresses
+- The `-auth-header` value no longer appears on the command line
+
 ## [2.0.2] - 2026-02-15
 
 ### Fixed
@@ -161,7 +205,8 @@ Initial production release of Lobster, a lightweight HTTP load testing and link 
 - Configurable request timeout and test duration
 - Performance targets with P95/P99 latency thresholds
 
-[Unreleased]: https://github.com/1mb-dev/lobster/compare/v2.0.2...HEAD
+[Unreleased]: https://github.com/1mb-dev/lobster/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/1mb-dev/lobster/compare/v2.0.2...v2.1.0
 [2.0.2]: https://github.com/1mb-dev/lobster/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/1mb-dev/lobster/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/1mb-dev/lobster/compare/v1.0.0...v2.0.0
