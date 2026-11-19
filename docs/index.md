@@ -5,38 +5,38 @@ nav_order: 1
 
 # Lobster
 
-Intelligent web stress testing with automated URL discovery.
+Crawl a site you own and check every page it links against performance targets.
 
-Lobster crawls your application, discovers all linked pages, tests them under load, and validates performance against targets. Point it at your app, and it handles the rest.
+Lobster starts at a base URL, follows same-host links, fetches each page it finds, and reports a pass or fail line for each performance target.
 
 ## Key Features
 
-- **Auto URL Discovery**: Crawls and finds all linked pages automatically
-- **Concurrent Testing**: Configurable workers with rate limiting
-- **Performance Validation**: Pass/fail against targets (p95, p99, success rate)
-- **Multi-format Reports**: HTML, JSON, and console output
-- **Security Hardened**: SSRF protection, secure credential handling
+- **URL discovery**: follows same-host `<a href>` links up to `-max-depth`
+- **Pass/fail per target**: success and error rate, average, p95 and p99 response time, requests per second
+- **Rate limiting**: one shared limit across all workers
+- **Reports**: console summary; JSON and HTML files with `-output`
+- **Private base URLs refused**: localhost and private IPs need `-allow-private-ips`
 
 ## Quick Start
 
 ### Installation
 
 ```bash
-go install github.com/1mb-dev/lobster/cmd/lobster@latest
+go install github.com/1mb-dev/lobster/v2/cmd/lobster@latest
 ```
 
 ### Basic Usage
 
-Test a public website:
-
-```bash
-lobster -url https://example.com -duration 30s
-```
-
-Test your local application:
+Check your local application:
 
 ```bash
 lobster -url http://localhost:3000 -allow-private-ips
+```
+
+Check a public site you own:
+
+```bash
+lobster -url https://example.com -duration 30s
 ```
 
 See the [Quick Start Guide](quickstart) for more examples.
@@ -47,8 +47,6 @@ See the [Quick Start Guide](quickstart) for more examples.
 |-------|-------------|
 | [Quick Start](quickstart) | Get up and running in 5 minutes |
 | [Configuration](configuration) | CLI flags, environment variables, and config files |
-| [Architecture](architecture) | Technical deep-dive into how Lobster works |
-| [Limitations](limitations) | Known limitations and workarounds |
 
 ## For Contributors
 
@@ -60,11 +58,11 @@ See the [Quick Start Guide](quickstart) for more examples.
 
 ## Responsible Use
 
-Lobster is a powerful tool. Only test systems you own or have explicit permission to test. See the [Responsible Use](responsible-use) guidelines.
+Only test systems you own or have explicit permission to test. See the [Responsible Use](responsible-use) guidelines.
 
 ## Version
 
-Current stable release: **v2.0.0**
+Current stable release: **v2.0.2**
 
 See the [Changelog](https://github.com/1mb-dev/lobster/blob/main/CHANGELOG.md) for release history and migration guides.
 

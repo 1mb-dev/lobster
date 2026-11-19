@@ -20,7 +20,7 @@ go build -o lobster cmd/lobster/main.go
 ### Using Go Install
 
 ```bash
-go install github.com/1mb-dev/lobster/cmd/lobster@latest
+go install github.com/1mb-dev/lobster/v2/cmd/lobster@latest
 ```
 
 ## Basic Usage
@@ -34,10 +34,10 @@ lobster -url http://localhost:3000 -allow-private-ips
 ```
 
 This will:
-- Crawl your application for 2 minutes (default duration)
-- Use 5 concurrent workers (default concurrency)
-- Automatically discover all linked pages
-- Generate a comprehensive report
+- Run for 2 minutes (default duration), even if the last page is fetched sooner
+- Use 5 concurrent workers (default concurrency) sharing one rate limit
+- Discover same-host linked pages up to depth 3 and fetch each once
+- Print a summary and a pass or fail line per performance target
 
 Note: The `-allow-private-ips` flag is required for localhost and private network testing (SSRF protection).
 
@@ -56,8 +56,8 @@ lobster \
 Parameters:
 - `-duration 5m`: Run for 5 minutes
 - `-concurrency 10`: Use 10 concurrent workers
-- `-rate 5.0`: Limit to 5 requests per second
-- `-output results.json`: Save results to file
+- `-rate 5.0`: Limit to 5 requests per second in total
+- `-output results.json`: Save results to `results.json` and `results.html`
 
 ### 3. View Results
 
@@ -102,26 +102,14 @@ Lobster validates performance against configured targets and reports pass/fail s
 
 ## Understanding Results
 
-Console output includes summary statistics and performance validation:
-
-```
-=== STRESS TEST RESULTS ===
-Duration: 2m0s | URLs Discovered: 42 | Total Requests: 2,450
-Successful: 2,442 | Failed: 8 | Success Rate: 99.67%
-Average Response Time: 18.7ms | Requests/Second: 20.4
-
-PERFORMANCE TARGET VALIDATION
-PASS Requests per Second:         20.4 req/s
-PASS Average Response Time:        18.7ms
-PASS 95th Percentile Response:    35.2ms
-PASS Success Rate:                99.67%
-Overall: 4/4 targets met (100.0%)
-```
+Console output has a summary (totals, success rate, average, minimum and maximum response time, a count of URLs per status code), then one PASS or FAIL line per performance target.
 
 **Key Metrics:**
-- **Success Rate**: >99% for production
-- **p95 Response Time**: 95% of requests faster than this value
-- **Requests/Second**: Sustained throughput capacity
+- **Success Rate**: share of requests that got an HTTP response, whatever its status (a 404 counts as a success; check the per-status counts)
+- **p95 Response Time**: 95% of requests were faster than this value
+- **Requests/Second**: total requests divided by the whole run duration; on a small site it stays low, so the default 100 req/s target fails
+
+The exit status does not reflect failed targets.
 
 ## With Authentication
 
@@ -142,7 +130,7 @@ See [Configuration](configuration) for all authentication options.
 ## Next Steps
 
 - [Configuration Reference](configuration) - All CLI flags and options
-- [Architecture](architecture) - How Lobster works
+- [Responsible Use](responsible-use) - Only test systems you own
 - [Contributing](contributing) - How to contribute
 
 ## Getting Help

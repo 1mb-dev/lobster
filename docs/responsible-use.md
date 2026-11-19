@@ -56,7 +56,7 @@ Penalties can include:
 1. **Minimize Harm**: Configure tests to avoid disrupting legitimate users
 2. **Transparency**: Be clear about who you are and what you're testing
 3. **Privacy**: Protect any data collected during testing
-4. **Respect**: Honor robots.txt, rate limits, and server capacity
+4. **Respect**: Honor robots.txt, rate limits, and server limits
 5. **Accountability**: Take responsibility for your testing activities
 
 ### Ethical Checklist
@@ -154,7 +154,7 @@ During testing:
 
 2. **Denial of Service Attacks**
    - Don't intentionally overwhelm servers to cause outages
-   - Don't ignore signs of server distress (errors, timeouts)
+   - Don't ignore signs of a struggling server (errors, timeouts)
 
 3. **Bypassing Security Controls**
    - Don't disable robots.txt compliance without permission
@@ -188,7 +188,7 @@ Test reports may contain sensitive information:
 - Internal server paths and configurations
 
 **Security Practices:**
-- **Generate reports to secure locations** with proper file permissions (Lobster uses 0o600)
+- **Write reports to secure locations** with proper file permissions (Lobster uses 0o600)
 - **Sanitize URLs** before sharing reports externally
 - **Don't commit reports** to version control systems
 - **Delete reports** when no longer needed

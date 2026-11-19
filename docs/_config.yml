@@ -1,5 +1,5 @@
 title: Lobster
-description: Intelligent web stress testing with automated URL discovery
+description: Crawl a site you own and check every page it links against performance targets
 url: https://1mb-dev.github.io
 baseurl: /lobster
 

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-02-15
+
+### Fixed
+
+- Module path is now `github.com/1mb-dev/lobster/v2`, so `go install github.com/1mb-dev/lobster/v2/cmd/lobster@latest` resolves this major version
+
+## [2.0.1] - 2026-02-15
+
+### Changed
+
+- Repository moved to the 1mb-dev organization; module path `github.com/1mb-dev/lobster`
+- Rate limiting uses `github.com/1mb-dev/goflow` v1.5.1, which drops the Prometheus dependencies
+
 ## [2.0.0] - 2026-01-15
 
 Major security hardening release with significant performance improvements.
@@ -18,7 +31,7 @@ Major security hardening release with significant performance improvements.
 - **Environment variable auth support**: `LOBSTER_AUTH_PASSWORD`, `LOBSTER_AUTH_TOKEN`, `LOBSTER_AUTH_COOKIE` environment variables
 - **URL validation with SSRF protection**: Blocks `file://`, `ftp://`, and private IP ranges by default
 - **`--allow-private-ips` flag**: Explicitly enable testing against internal/localhost URLs when needed
-- **Response size validation**: `--max-response-size` flag (default 10MB) prevents memory exhaustion from large responses
+- **Response size limit**: link extraction skips HTML responses whose Content-Length exceeds 10MB
 - **Dropped URL tracking**: Warns when URLs are dropped due to queue overflow with actionable hints
 - **Config and auth validation methods**: Early detection of invalid configuration before test execution
 
@@ -148,6 +161,8 @@ Initial production release of Lobster, a lightweight HTTP load testing and link 
 - Configurable request timeout and test duration
 - Performance targets with P95/P99 latency thresholds
 
-[Unreleased]: https://github.com/1mb-dev/lobster/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/1mb-dev/lobster/compare/v2.0.2...HEAD
+[2.0.2]: https://github.com/1mb-dev/lobster/compare/v2.0.1...v2.0.2
+[2.0.1]: https://github.com/1mb-dev/lobster/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/1mb-dev/lobster/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/1mb-dev/lobster/releases/tag/v1.0.0

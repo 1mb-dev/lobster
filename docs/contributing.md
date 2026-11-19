@@ -150,16 +150,21 @@ docs(readme): update installation instructions
 lobster/
 ├── cmd/lobster/          # CLI entry point
 ├── internal/
-│   ├── domain/            # Core business entities
+│   ├── cli/               # Flag merging, auth, help text
+│   ├── config/            # Configuration file loading
 │   ├── crawler/           # URL discovery
-│   ├── tester/            # Stress testing engine
-│   ├── reporter/          # Report generation
-│   ├── validator/         # Performance validation
-│   └── config/            # Configuration
-├── docs/                  # Documentation
+│   ├── domain/            # Core entities
+│   ├── reporter/          # Console, JSON and HTML reports
+│   ├── robots/            # robots.txt parsing
+│   ├── tester/            # Worker pool, rate limiting, requests
+│   ├── util/              # URL validation, sanitization
+│   └── validator/         # Performance target validation
+├── docs/                  # Documentation site
 ├── examples/              # Example configurations
 └── README.md
 ```
+
+Flow: crawler → tester → validator + reporter; `domain` holds the config and result types.
 
 ## Getting Help
 

@@ -25,7 +25,7 @@ Lobster can be configured through:
 | `-concurrency` | int | 5 | Number of concurrent workers |
 | `-duration` | string | "2m" | Test duration (e.g., "30s", "5m", "1h") |
 | `-timeout` | string | "30s" | HTTP request timeout |
-| `-rate` | float | 2.0 | Requests per second limit per worker |
+| `-rate` | float | 2.0 | Requests per second, shared by all workers (minimum 0.1) |
 | `-user-agent` | string | "Lobster/1.0" | User-Agent header for requests |
 
 ### Crawling Options
@@ -33,8 +33,8 @@ Lobster can be configured through:
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `-follow-links` | bool | true | Discover and follow links from HTML pages |
-| `-max-depth` | int | 3 | Maximum crawl depth (0 = base URL only) |
-| `-queue-size` | int | 10000 | URL queue buffer capacity |
+| `-max-depth` | int | 3 | Maximum crawl depth |
+| `-queue-size` | int | 10000 | URL queue buffer size |
 | `-ignore-robots` | bool | false | Ignore robots.txt directives |
 
 ### Request Behavior
@@ -65,7 +65,7 @@ Lobster can be configured through:
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `-output` | string | "" | Output file for results (JSON or HTML based on extension) |
+| `-output` | string | "" | JSON results file; an HTML report with the same name and `.html` is written beside it |
 | `-verbose` | bool | false | Enable verbose JSON logging |
 | `-no-progress` | bool | false | Disable progress bar updates |
 | `-compare` | string | "" | Compare against target (e.g., "Ghost", "WordPress") |
@@ -195,6 +195,8 @@ Configuration values are merged in this order (later overrides earlier):
 3. **Environment variables** - For credentials and sensitive settings
 4. **CLI flags** - Highest priority, always wins
 
+Exception: the boolean settings `follow_links`, `respect_429`, `dry_run`, `verbose`, `insecure_skip_verify` and `ignore_robots` always take the flag's value, default included, so setting them in the file has no effect. Set them as flags.
+
 Example:
 ```bash
 # Config file sets concurrency=5
@@ -207,13 +209,13 @@ lobster -config config.json -concurrency 20
 ### Basic Usage
 
 ```bash
-# Simple test with defaults
-lobster -url https://example.com
+# Local application with defaults
+lobster -url http://localhost:3000 -allow-private-ips
 
 # Custom duration and concurrency
-lobster -url https://example.com -duration 5m -concurrency 10
+lobster -url http://localhost:3000 -allow-private-ips -duration 5m -concurrency 10
 
-# Rate-limited test
+# Rate-limited run against a public site you own
 lobster -url https://example.com -rate 10 -duration 2m
 ```
 
@@ -236,7 +238,7 @@ vault kv get -field=token secret/api | \
 ### URL Discovery (Dry Run)
 
 ```bash
-# Discover all URLs without stress testing
+# Discover URLs without timing requests
 lobster -url https://example.com -dry-run -max-depth 5 -output urls.json
 ```
 
@@ -251,34 +253,20 @@ export LOBSTER_INSECURE_TLS=true
 lobster -url https://dev.internal:8443 -insecure-skip-verify -allow-private-ips
 ```
 
-### CI/CD Integration
-
-```bash
-# Exit with error code on performance target failure
-lobster -url https://staging.example.com \
-  -config performance-targets.json \
-  -output results.html \
-  -no-progress
-
-# Check exit code: 0 = pass, 1 = fail
-echo "Exit code: $?"
-```
-
 ## Performance Tuning
 
 ### Concurrency
 
 - **Low concurrency (1-5)**: Gentle testing, accurate latency measurements
 - **Medium (10-20)**: Balanced load testing
-- **High (50+)**: Stress testing, may saturate network/CPU
+- **High (50+)**: may saturate the client's network or CPU
 
 ### Rate Limiting
 
-- **No limit (`-rate 0`)**: Maximum throughput
-- **Rate < 1**: Sub-request-per-second (e.g., 0.5 = one request every 2 seconds)
-- **Rate >= 1**: Requests per second per worker
+- **Rate < 1**: Sub-request-per-second (e.g., 0.5 = one request every 2 seconds); the minimum is 0.1
+- **Rate >= 1**: Requests per second across all workers
 
-Total RPS = `rate × concurrency`
+The limit is global: after an initial burst of up to twice `-rate`, total requests per second stays at `-rate`, whatever `-concurrency` is.
 
 ### Queue Size
 

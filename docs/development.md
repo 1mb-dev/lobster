@@ -7,23 +7,21 @@ nav_order: 6
 
 ## Project Overview
 
-**Lobster** is an intelligent web application stress testing tool that automatically discovers URLs through crawling and validates performance under concurrent load.
+**Lobster** crawls a site from a base URL, fetches each page it finds, and checks response times and success rate against performance targets.
 
 **Repository**: https://github.com/1mb-dev/lobster
-**Version**: 2.0.0
 **License**: MIT
 
 ## What Makes Lobster Different
 
 1. **Crawler-First**: Automatically discovers URLs (unlike ab, wrk, hey, vegeta)
 2. **Validation-Focused**: Pass/fail criteria vs raw metrics (unlike k6, JMeter)
-3. **Zero-Config**: Works out of the box (unlike enterprise tools)
-4. **Smart Rate Limiting**: Uses goflow token bucket to respect server capacity
-5. **Security Hardened**: SSRF protection, secure credential handling
+3. **Polite by default**: one goflow token bucket shared by all workers, robots.txt respected
+4. **Private base URLs refused**: localhost and private IPs need `-allow-private-ips`
 
 ## Architecture
 
-### Clean Architecture Layers
+### Package Layers
 
 ```
 cmd/lobster/            # CLI entry point, flag parsing
@@ -94,7 +92,7 @@ if err := t.rateLimiter.Wait(ctx); err != nil {
 }
 ```
 
-**Burst capacity**: 2x the rate per second allows short bursts while maintaining overall limit.
+**Burst**: 2x the rate per second allows short bursts while maintaining overall limit.
 
 ### URL Discovery
 
