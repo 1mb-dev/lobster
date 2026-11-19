@@ -44,8 +44,10 @@ type Config struct {
 	Timeout string `json:"timeout"`
 	// UserAgent is the User-Agent header sent with each request.
 	UserAgent string `json:"user_agent"`
-	// OutputFile is the path to write the report (HTML or JSON based on extension).
+	// OutputFile is the path of the JSON results file (none when empty).
 	OutputFile string `json:"output_file"`
+	// HTMLFile is the path of the HTML report (none when empty).
+	HTMLFile string `json:"html_file"`
 	// Rate is the maximum requests per second, shared by all workers (at least MinRate).
 	Rate float64 `json:"rate"`
 	// Concurrency is the number of parallel workers making requests.

@@ -104,7 +104,7 @@ func TestIntegration_FullCrawlWorkflow(t *testing.T) {
 	}
 
 	// Verify response times are populated
-	if len(results.ResponseTimes) == 0 {
+	if results.ResponseTimes.Count() == 0 {
 		t.Error("Expected response times to be recorded")
 	}
 }

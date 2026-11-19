@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"github.com/1mb-dev/lobster/v2/internal/stats"
+)
 
 // URLTask represents a URL to be tested during stress testing.
 // Depth tracks how many links deep this URL was discovered from the base URL,
@@ -22,8 +26,8 @@ type TestResults struct {
 	Errors []ErrorInfo `json:"errors"`
 	// SlowRequests contains requests that exceeded the slow threshold (default 2s).
 	SlowRequests []SlowRequest `json:"slow_requests"`
-	// ResponseTimes contains individual response time measurements for analysis.
-	ResponseTimes []ResponseTimeEntry `json:"response_times"`
+	// ResponseTimes counts response times in fixed buckets; memory does not grow with requests.
+	ResponseTimes *stats.Histogram `json:"response_time_histogram"`
 	// PerformanceValidation contains pass/fail status for each performance target.
 	PerformanceValidation map[string]any `json:"performance_validation,omitempty"`
 	// Duration is the total test execution time as a human-readable string.
@@ -34,6 +38,10 @@ type TestResults struct {
 	MinResponseTime string `json:"min_response_time"`
 	// MaxResponseTime is the slowest response time recorded.
 	MaxResponseTime string `json:"max_response_time"`
+	// P95ResponseTime is the nearest-rank 95th percentile, to within one histogram bucket.
+	P95ResponseTime string `json:"p95_response_time"`
+	// P99ResponseTime is the nearest-rank 99th percentile, to within one histogram bucket.
+	P99ResponseTime string `json:"p99_response_time"`
 	// TotalRequests is the total number of HTTP requests made.
 	TotalRequests int64 `json:"total_requests"`
 	// SuccessfulRequests is the count of requests that got a 200-399 status.
@@ -105,17 +113,6 @@ type SlowRequest struct {
 	URL string `json:"url"`
 	// StatusCode is the HTTP status returned.
 	StatusCode int `json:"status_code"`
-}
-
-// ResponseTimeEntry represents a single response time measurement.
-// Used for calculating percentile statistics and time-series analysis.
-type ResponseTimeEntry struct {
-	// Timestamp is when the response was received.
-	Timestamp time.Time `json:"timestamp"`
-	// ResponseTime is the request duration.
-	ResponseTime time.Duration `json:"response_time"`
-	// URL is the endpoint that was requested.
-	URL string `json:"url"`
 }
 
 // PerformanceTarget represents the result of validating a performance criterion.

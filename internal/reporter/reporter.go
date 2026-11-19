@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
+	"github.com/1mb-dev/lobster/v2/internal/stats"
 )
 
 //go:embed templates/report.html
@@ -66,7 +67,16 @@ type TemplateData struct {
 	URLValidations      []URLValidationEntry
 	SlowRequests        []SlowRequestEntry
 	Errors              []domain.ErrorInfo
-	ResponseTimesMs     []float64
+	P95ResponseTime     string
+	P99ResponseTime     string
+	LatencyBars         []LatencyBar
+}
+
+// LatencyBar is one response-time histogram bucket drawn as a CSS bar.
+type LatencyBar struct {
+	Label string  // the bucket's upper bound, e.g. "≤ 12.3ms"
+	Count uint64  // requests in the bucket
+	Width float64 // bar width, percent of the fullest bucket
 }
 
 // New creates a new report generator
@@ -241,11 +251,7 @@ func (r *Reporter) prepareTemplateData() *TemplateData {
 		})
 	}
 
-	// Convert response times to milliseconds for charting
-	responseTimesMs := make([]float64, 0, len(r.results.ResponseTimes))
-	for _, entry := range r.results.ResponseTimes {
-		responseTimesMs = append(responseTimesMs, float64(entry.ResponseTime.Nanoseconds())/1000000)
-	}
+	latencyBars := latencyBars(r.results.ResponseTimes.Buckets())
 
 	// Determine success rate class
 	successRateClass := "success-high"
@@ -271,8 +277,27 @@ func (r *Reporter) prepareTemplateData() *TemplateData {
 		URLValidations:      urlValidations,
 		SlowRequests:        slowRequests,
 		Errors:              r.results.Errors,
-		ResponseTimesMs:     responseTimesMs,
+		P95ResponseTime:     r.results.P95ResponseTime,
+		P99ResponseTime:     r.results.P99ResponseTime,
+		LatencyBars:         latencyBars,
 	}
+}
+
+// latencyBars scales each bucket's bar to the fullest bucket.
+func latencyBars(buckets []stats.Bucket) []LatencyBar {
+	var most uint64
+	for _, b := range buckets {
+		most = max(most, b.Count)
+	}
+	bars := make([]LatencyBar, len(buckets))
+	for i, b := range buckets {
+		bars[i] = LatencyBar{
+			Label: "≤ " + b.UpperBound.Round(10*time.Microsecond).String(),
+			Count: b.Count,
+			Width: float64(b.Count) / float64(most) * 100,
+		}
+	}
+	return bars
 }
 
 // statusGroupFromCode returns the status group CSS class for a given HTTP status code.

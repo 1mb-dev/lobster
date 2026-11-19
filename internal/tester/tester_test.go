@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
+	"github.com/1mb-dev/lobster/v2/internal/stats"
+	"github.com/1mb-dev/lobster/v2/internal/testutil"
 )
 
 // Test helper to create a test logger
@@ -462,11 +464,7 @@ func TestCalculateResults(t *testing.T) {
 	}
 
 	// Populate test data
-	tester.results.ResponseTimes = []domain.ResponseTimeEntry{
-		{ResponseTime: 100 * time.Millisecond},
-		{ResponseTime: 200 * time.Millisecond},
-		{ResponseTime: 300 * time.Millisecond},
-	}
+	tester.results.ResponseTimes = testutil.Histogram(100*time.Millisecond, 200*time.Millisecond, 300*time.Millisecond)
 	tester.results.TotalRequests = 10
 	tester.results.SuccessfulRequests = 8
 	tester.results.FailedRequests = 2
@@ -524,7 +522,7 @@ func TestAggregator_ChannelCollection(t *testing.T) {
 	}
 
 	// Initialize results
-	tester.results.ResponseTimes = make([]domain.ResponseTimeEntry, 0)
+	tester.results.ResponseTimes = stats.NewHistogram()
 	tester.results.Errors = make([]domain.ErrorInfo, 0)
 	tester.results.SlowRequests = make([]domain.SlowRequest, 0)
 	tester.results.URLValidations = make([]domain.URLValidation, 0)
@@ -541,8 +539,7 @@ func TestAggregator_ChannelCollection(t *testing.T) {
 	errInfo := domain.ErrorInfo{URL: "http://error.com", Error: "test error"}
 	tester.errorsCh <- errInfo
 
-	responseTime := domain.ResponseTimeEntry{URL: "http://test.com", ResponseTime: 100 * time.Millisecond}
-	tester.responseTimesCh <- responseTime
+	tester.responseTimesCh <- 100 * time.Millisecond
 
 	slowReq := domain.SlowRequest{URL: "http://slow.com", ResponseTime: 3 * time.Second}
 	tester.slowRequestsCh <- slowReq
@@ -564,8 +561,8 @@ func TestAggregator_ChannelCollection(t *testing.T) {
 		t.Errorf("Expected 1 error, got %d", len(tester.results.Errors))
 	}
 
-	if len(tester.results.ResponseTimes) != 1 {
-		t.Errorf("Expected 1 response time, got %d", len(tester.results.ResponseTimes))
+	if tester.results.ResponseTimes.Count() != 1 {
+		t.Errorf("Expected 1 response time, got %d", tester.results.ResponseTimes.Count())
 	}
 
 	if len(tester.results.SlowRequests) != 1 {

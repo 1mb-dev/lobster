@@ -27,7 +27,8 @@
         .status-200 { color: #48bb78; font-weight: bold; }
         .status-300 { color: #ed8936; font-weight: bold; }
         .status-400, .status-500 { color: #f56565; font-weight: bold; }
-        .chart-container { margin: 20px 0; }
+        .bar-cell { width: 60%; }
+        .bar { height: 14px; background: #667eea; border-radius: 3px; min-width: 2px; }
         .progress-bar { width: 100%; height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden; }
         .progress-fill { height: 100%; background: linear-gradient(90deg, #48bb78, #38a169); transition: width 0.3s ease; }
         .error-item { background: #fed7d7; border: 1px solid #feb2b2; border-radius: 6px; padding: 15px; margin-bottom: 10px; }
@@ -45,7 +46,6 @@
         .security-warning ul { color: #856404; margin-left: 25px; margin-top: 8px; line-height: 1.8; }
         .security-warning strong { font-weight: 600; }
     </style>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <div class="container">
@@ -95,6 +95,14 @@
                 <div class="value">{{.AverageResponseTime}}</div>
             </div>
             <div class="stat-card">
+                <h3>p95 Response Time</h3>
+                <div class="value">{{.P95ResponseTime}}</div>
+            </div>
+            <div class="stat-card">
+                <h3>p99 Response Time</h3>
+                <div class="value">{{.P99ResponseTime}}</div>
+            </div>
+            <div class="stat-card">
                 <h3>Failed Requests</h3>
                 <div class="value">{{.FailedRequests}}</div>
             </div>
@@ -105,9 +113,6 @@
                 <h2>📊 Response Status Distribution</h2>
             </div>
             <div class="section-content">
-                <div class="chart-container">
-                    <canvas id="statusChart" width="400" height="200"></canvas>
-                </div>
                 <table class="table">
                     <thead>
                         <tr>
@@ -217,71 +222,27 @@
                 <h2>📈 Response Time Distribution</h2>
             </div>
             <div class="section-content">
-                <div class="chart-container">
-                    <canvas id="responseTimeChart" width="400" height="200"></canvas>
-                </div>
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Response Time</th>
+                            <th>Requests</th>
+                            <th class="bar-cell"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .LatencyBars}}
+                        <tr>
+                            <td>{{.Label}}</td>
+                            <td>{{.Count}}</td>
+                            <td class="bar-cell"><div class="bar" style="width: {{printf "%.1f" .Width}}%;"></div></td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
 
-    <script>
-        const statusCtx = document.getElementById('statusChart').getContext('2d');
-        new Chart(statusCtx, {
-            type: 'doughnut',
-            data: {
-                labels: [{{range .StatusDistribution}}'HTTP {{.StatusCode}}',{{end}}],
-                datasets: [{
-                    data: [{{range .StatusDistribution}}{{.Count}},{{end}}],
-                    backgroundColor: ['#48bb78', '#38a169', '#68d391', '#ed8936', '#f6ad55', '#fbd38d', '#f56565', '#fc8181', '#feb2b2']
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: { legend: { position: 'bottom' } }
-            }
-        });
-
-        const timeCtx = document.getElementById('responseTimeChart').getContext('2d');
-        const responseTimes = [{{range .ResponseTimesMs}}{{.}},{{end}}];
-
-        const buckets = 20;
-        const min = Math.min(...responseTimes);
-        const max = Math.max(...responseTimes);
-        const bucketSize = (max - min) / buckets;
-        const histogram = new Array(buckets).fill(0);
-        const labels = [];
-
-        responseTimes.forEach(time => {
-            const bucketIndex = Math.min(Math.floor((time - min) / bucketSize), buckets - 1);
-            histogram[bucketIndex]++;
-        });
-
-        for (let i = 0; i < buckets; i++) {
-            const start = min + (i * bucketSize);
-            const end = min + ((i + 1) * bucketSize);
-            labels.push(start.toFixed(0) + '-' + end.toFixed(0) + 'ms');
-        }
-
-        new Chart(timeCtx, {
-            type: 'bar',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: 'Request Count',
-                    data: histogram,
-                    backgroundColor: '#667eea',
-                    borderColor: '#764ba2',
-                    borderWidth: 1
-                }]
-            },
-            options: {
-                responsive: true,
-                scales: {
-                    y: { beginAtZero: true, title: { display: true, text: 'Number of Requests' } },
-                    x: { title: { display: true, text: 'Response Time (ms)' } }
-                }
-            }
-        });
-    </script>
 </body>
 </html>

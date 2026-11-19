@@ -11,6 +11,7 @@ type ConfigOptions struct {
 	Timeout            string
 	UserAgent          string
 	OutputFile         string
+	HTMLFile           string
 	Rate               float64
 	Concurrency        int
 	MaxDepth           int

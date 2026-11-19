@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
-	"github.com/1mb-dev/lobster/v2/internal/stats"
 )
 
 // Verdicts reported under the overall_status key.
@@ -40,11 +39,7 @@ func (v *Validator) ValidateResults(results *domain.TestResults) {
 	v.crawlComplete = results.CrawlComplete
 	v.incompleteReason = results.IncompleteReason
 
-	times := make([]time.Duration, len(results.ResponseTimes))
-	for i, entry := range results.ResponseTimes {
-		times[i] = entry.ResponseTime
-	}
-	s := stats.Summarize(times)
+	s := results.ResponseTimes.Summary()
 	tc := v.targetConfig
 
 	if tc.RequestsPerSecond > 0 {

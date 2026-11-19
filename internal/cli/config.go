@@ -23,7 +23,8 @@ func RegisterConfigFlags(fs *flag.FlagSet) *ConfigOptions {
 	fs.IntVar(&o.QueueSize, "queue-size", 0, "URL queue buffer size")
 	fs.BoolVar(&o.InsecureSkipVerify, "insecure-skip-verify", false, "INSECURE: Skip TLS certificate verification")
 	fs.BoolVar(&o.IgnoreRobots, "ignore-robots", false, "Ignore robots.txt directives (use responsibly)")
-	fs.StringVar(&o.OutputFile, "output", "", "Output file for results (JSON)")
+	fs.StringVar(&o.OutputFile, "output", "", "JSON results file")
+	fs.StringVar(&o.HTMLFile, "html", "", "HTML report file")
 	fs.BoolVar(&o.Verbose, "verbose", false, "Verbose logging")
 	fs.StringVar(&o.AuthType, "auth-type", "", "Authentication type: basic, bearer, cookie, header")
 	fs.StringVar(&o.AuthUsername, "auth-username", "", "Username for basic authentication")
@@ -79,6 +80,7 @@ func flagSetters(cfg *domain.Config, o *ConfigOptions) map[string]func() {
 		"max-depth":            func() { cfg.MaxDepth = o.MaxDepth },
 		"queue-size":           func() { cfg.QueueSize = o.QueueSize },
 		"output":               func() { cfg.OutputFile = o.OutputFile },
+		"html":                 func() { cfg.HTMLFile = o.HTMLFile },
 		"verbose":              func() { cfg.Verbose = o.Verbose },
 		"insecure-skip-verify": func() { cfg.InsecureSkipVerify = o.InsecureSkipVerify },
 		"ignore-robots":        func() { cfg.IgnoreRobots = o.IgnoreRobots },

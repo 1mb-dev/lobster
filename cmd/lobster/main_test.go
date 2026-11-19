@@ -174,3 +174,28 @@ func TestRun_BaseRedirectOffHostExits2(t *testing.T) {
 		t.Errorf("stderr does not name the final URL %s:\n%s", target, stderr.String())
 	}
 }
+
+func TestRun_HTMLOnlyWhenAsked(t *testing.T) {
+	dir := t.TempDir()
+	url := testSite(t, "/ok")
+	var stdout, stderr bytes.Buffer
+
+	if code := run(local(url, "-output", filepath.Join(dir, "x.json")), &stdout, &stderr); code != exitPass {
+		t.Fatalf("run = %d\n%s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "x.html")); !os.IsNotExist(err) {
+		t.Errorf("-output x.json also wrote x.html (stat error %v)", err)
+	}
+
+	report := filepath.Join(dir, "report.html")
+	if code := run(local(url, "-html", report), &stdout, &stderr); code != exitPass {
+		t.Fatalf("run = %d\n%s", code, stderr.String())
+	}
+	if _, err := os.Stat(report); err != nil {
+		t.Errorf("-html did not write the report: %v", err)
+	}
+
+	if code := run(local(url, "-html", filepath.Join(dir, "missing", "r.html")), &stdout, &stderr); code != exitError {
+		t.Errorf("unwritable -html path: run = %d, want %d", code, exitError)
+	}
+}

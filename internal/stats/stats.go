@@ -1,10 +1,22 @@
-// Package stats computes response-time statistics.
+// Package stats computes response-time statistics from a fixed log-bucket histogram.
 package stats
 
 import (
-	"slices"
+	"encoding/json"
+	"math"
 	"time"
 )
+
+const (
+	bucketsPerOctave = 8
+	octaves          = 28 // 1µs to about 268s
+	numBuckets       = bucketsPerOctave * octaves
+	baseBucket       = time.Microsecond
+)
+
+// BucketRatio is the ratio between consecutive bucket bounds, and so the
+// largest factor by which a reported quantile can exceed the true value.
+var BucketRatio = math.Pow(2, 1.0/bucketsPerOctave)
 
 // Summary describes a set of response times.
 type Summary struct {
@@ -16,40 +28,134 @@ type Summary struct {
 	P99   time.Duration
 }
 
-// Summarize computes a Summary of values without modifying them. An empty
-// input gives a zero Summary.
-func Summarize(values []time.Duration) Summary {
-	if len(values) == 0 {
+// Histogram counts durations in fixed logarithmic buckets: bucket i holds
+// values in (bound(i-1), bound(i)], bound(i) = 1µs * 2^(i/8). Memory is
+// constant however many values are recorded. Min, max and mean are exact.
+// A Histogram is not safe for concurrent use.
+type Histogram struct {
+	counts [numBuckets]uint64
+	n      uint64
+	sum    time.Duration
+	min    time.Duration
+	max    time.Duration
+}
+
+// NewHistogram returns an empty histogram.
+func NewHistogram() *Histogram {
+	return &Histogram{}
+}
+
+// UpperBound returns bucket i's inclusive upper bound.
+func UpperBound(i int) time.Duration {
+	return time.Duration(float64(baseBucket) * math.Pow(2, float64(i)/bucketsPerOctave))
+}
+
+func bucketIndex(d time.Duration) int {
+	if d <= baseBucket {
+		return 0
+	}
+	i := int(math.Ceil(bucketsPerOctave * math.Log2(float64(d)/float64(baseBucket))))
+	return min(i, numBuckets-1)
+}
+
+// Record adds one duration.
+func (h *Histogram) Record(d time.Duration) {
+	if h.n == 0 || d < h.min {
+		h.min = d
+	}
+	if d > h.max {
+		h.max = d
+	}
+	h.counts[bucketIndex(d)]++
+	h.n++
+	h.sum += d
+}
+
+// Count returns how many durations were recorded.
+func (h *Histogram) Count() int {
+	if h == nil {
+		return 0
+	}
+	return int(h.n)
+}
+
+// NearestRank returns the 1-based nearest rank of the p-th percentile among n
+// values: ceil(p*n/100), at least 1 and at most n.
+func NearestRank(p float64, n int) int {
+	exact := p * float64(n) / 100
+	rank := int(exact)
+	if float64(rank) < exact {
+		rank++
+	}
+	return max(1, min(rank, n))
+}
+
+// Quantile returns the nearest-rank p-th percentile as the upper bound of the
+// bucket holding that rank, clamped to the recorded maximum. It is at least
+// the true value and less than BucketRatio times it. An empty histogram gives 0.
+func (h *Histogram) Quantile(p float64) time.Duration {
+	if h.Count() == 0 {
+		return 0
+	}
+	rank := uint64(NearestRank(p, int(h.n)))
+	var cum uint64
+	for i, c := range &h.counts {
+		cum += c
+		if cum >= rank {
+			return min(UpperBound(i), h.max)
+		}
+	}
+	return h.max
+}
+
+// Summary returns the histogram's statistics; an empty or nil histogram gives a zero Summary.
+func (h *Histogram) Summary() Summary {
+	if h.Count() == 0 {
 		return Summary{}
 	}
-	sorted := slices.Clone(values)
-	slices.Sort(sorted)
-
-	var sum time.Duration
-	for _, v := range sorted {
-		sum += v
-	}
 	return Summary{
-		Count: len(sorted),
-		Min:   sorted[0],
-		Max:   sorted[len(sorted)-1],
-		Mean:  sum / time.Duration(len(sorted)),
-		P95:   Percentile(sorted, 95),
-		P99:   Percentile(sorted, 99),
+		Count: int(h.n),
+		Min:   h.min,
+		Max:   h.max,
+		Mean:  h.sum / time.Duration(h.n),
+		P95:   h.Quantile(95),
+		P99:   h.Quantile(99),
 	}
 }
 
-// Percentile returns the nearest-rank p-th percentile of ascending values:
-// the value at rank ceil(p*n/100), counting from 1. It returns 0 for no values.
-func Percentile(sorted []time.Duration, p float64) time.Duration {
-	n := len(sorted)
-	if n == 0 {
-		return 0
+// Bucket is one non-empty histogram bucket.
+type Bucket struct {
+	UpperBound time.Duration
+	Count      uint64
+}
+
+// Buckets returns the non-empty buckets in ascending order.
+func (h *Histogram) Buckets() []Bucket {
+	if h == nil {
+		return nil
 	}
-	rank := int(p * float64(n) / 100)
-	if float64(rank) < p*float64(n)/100 {
-		rank++
+	var out []Bucket
+	for i, c := range &h.counts {
+		if c > 0 {
+			out = append(out, Bucket{UpperBound: UpperBound(i), Count: c})
+		}
 	}
-	rank = max(1, min(rank, n))
-	return sorted[rank-1]
+	return out
+}
+
+// MarshalJSON writes the non-empty buckets, upper bounds in microseconds.
+func (h *Histogram) MarshalJSON() ([]byte, error) {
+	type bucket struct {
+		UpperBoundUs float64 `json:"le_us"`
+		Count        uint64  `json:"count"`
+	}
+	nonEmpty := h.Buckets()
+	buckets := make([]bucket, 0, len(nonEmpty))
+	for _, b := range nonEmpty {
+		buckets = append(buckets, bucket{UpperBoundUs: math.Round(float64(b.UpperBound)/1e3*1000) / 1000, Count: b.Count})
+	}
+	return json.Marshal(struct {
+		Count   int      `json:"count"`
+		Buckets []bucket `json:"buckets"`
+	}{h.Count(), buckets})
 }

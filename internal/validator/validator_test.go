@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
+	"github.com/1mb-dev/lobster/v2/internal/stats"
 )
 
 // results returns complete-crawl results with response times 1..n ms.
@@ -20,8 +21,9 @@ func results(n int, success int64) *domain.TestResults {
 		RequestsPerSecond:  10,
 		CrawlComplete:      true,
 	}
+	r.ResponseTimes = stats.NewHistogram()
 	for i := 1; i <= n; i++ {
-		r.ResponseTimes = append(r.ResponseTimes, domain.ResponseTimeEntry{ResponseTime: time.Duration(i) * time.Millisecond})
+		r.ResponseTimes.Record(time.Duration(i) * time.Millisecond)
 	}
 	return r
 }
@@ -35,15 +37,22 @@ func judged(v *Validator) map[string]domain.PerformanceTarget {
 }
 
 func TestValidateResults_PercentileIsNearestRank(t *testing.T) {
-	v := New(domain.PerformanceTargets{P95ResponseTimeMs: 95, P99ResponseTimeMs: 98.5})
-	v.ValidateResults(results(100, 100))
-
-	got := judged(v)
-	if p95 := got["95th Percentile Response Time"]; p95.Actual != "95.0ms" || !p95.Passed {
-		t.Errorf("p95 of 1..100ms = %s (passed %v), want the 95th value, 95.0ms, passing a 95ms target", p95.Actual, p95.Passed)
+	// p95 of 1..100ms is the 95th value, reported to within one histogram
+	// bucket: in [95ms, 95ms*BucketRatio). A 94.9ms target fails; one at the
+	// bucket's top passes.
+	tests := []struct {
+		targetMs float64
+		pass     bool
+	}{
+		{94.9, false},
+		{95 * stats.BucketRatio, true},
 	}
-	if p99 := got["99th Percentile Response Time"]; p99.Actual != "99.0ms" || p99.Passed {
-		t.Errorf("p99 of 1..100ms = %s (passed %v), want 99.0ms, failing a 98.5ms target", p99.Actual, p99.Passed)
+	for _, tt := range tests {
+		v := New(domain.PerformanceTargets{P95ResponseTimeMs: tt.targetMs})
+		v.ValidateResults(results(100, 100))
+		if got := judged(v)["95th Percentile Response Time"]; got.Passed != tt.pass {
+			t.Errorf("p95 %s against %.2fms: passed %v, want %v", got.Actual, tt.targetMs, got.Passed, tt.pass)
+		}
 	}
 }
 

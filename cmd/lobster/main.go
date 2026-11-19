@@ -9,8 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/1mb-dev/lobster/v2/internal/cli"
@@ -127,9 +125,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	rep.PrintSummary(stdout)
 	performanceValidator.PrintValidationReport(stdout)
 
+	results.PerformanceValidation = performanceValidator.GetValidationSummary()
 	if cfg.OutputFile != "" {
-		results.PerformanceValidation = performanceValidator.GetValidationSummary()
-
 		if err = rep.GenerateJSON(cfg.OutputFile); err != nil {
 			logger.Error("Cannot write results",
 				"file", cfg.OutputFile,
@@ -138,13 +135,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return exitError
 		}
 		logger.Info("Results saved", "file", cfg.OutputFile)
-
-		htmlFile := strings.TrimSuffix(cfg.OutputFile, filepath.Ext(cfg.OutputFile)) + ".html"
-		if err = rep.GenerateHTML(htmlFile); err != nil {
-			logger.Error("Cannot write HTML report", "file", htmlFile, "error", err)
-		} else {
-			logger.Info("HTML report generated", "file", htmlFile)
+	}
+	if cfg.HTMLFile != "" {
+		if err = rep.GenerateHTML(cfg.HTMLFile); err != nil {
+			logger.Error("Cannot write HTML report", "file", cfg.HTMLFile, "error", err)
+			return exitError
 		}
+		logger.Info("HTML report saved", "file", cfg.HTMLFile)
 	}
 
 	if performanceValidator.Passed() {

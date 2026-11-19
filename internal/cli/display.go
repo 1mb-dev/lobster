@@ -77,7 +77,9 @@ OPTIONS:
         Ignore robots.txt directives
         Only use if you OWN the website or have explicit permission
     -output string
-        JSON results file; an HTML report is written beside it
+        JSON results file
+    -html string
+        HTML report file: summary, status counts, response-time histogram
     -verbose
         Enable verbose logging with structured output
     -no-progress
@@ -117,7 +119,8 @@ EXAMPLES:
     lobster -url http://localhost:3000 -allow-private-ips -max-depth 0
 
     # Faster crawl, with JSON and HTML reports
-    lobster -url http://localhost:3000 -allow-private-ips -rate 10 -output results.json
+    lobster -url http://localhost:3000 -allow-private-ips -rate 10 \
+        -output results.json -html report.html
 
     # Use configuration file
     lobster -config myconfig.json

@@ -52,7 +52,7 @@ type Tester struct {
 	// Result channels for lock-free aggregation
 	validationsCh   chan domain.URLValidation
 	errorsCh        chan domain.ErrorInfo
-	responseTimesCh chan domain.ResponseTimeEntry
+	responseTimesCh chan time.Duration
 	slowRequestsCh  chan domain.SlowRequest
 
 	// baseRefused is set by the base URL's task when the dial check or the
@@ -169,7 +169,7 @@ func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 		logger:          logger,
 		validationsCh:   make(chan domain.URLValidation, resultBufferSize),
 		errorsCh:        make(chan domain.ErrorInfo, resultBufferSize),
-		responseTimesCh: make(chan domain.ResponseTimeEntry, resultBufferSize),
+		responseTimesCh: make(chan time.Duration, resultBufferSize),
 		slowRequestsCh:  make(chan domain.SlowRequest, slowBufferSize),
 		done:            make(chan struct{}),
 	}, nil
@@ -180,7 +180,7 @@ func (t *Tester) Run(ctx context.Context) (*domain.TestResults, error) {
 	startTime := time.Now()
 
 	// Initialize results
-	t.results.ResponseTimes = make([]domain.ResponseTimeEntry, 0)
+	t.results.ResponseTimes = stats.NewHistogram()
 	t.results.Errors = make([]domain.ErrorInfo, 0)
 	t.results.SlowRequests = make([]domain.SlowRequest, 0)
 
@@ -265,7 +265,7 @@ func (t *Tester) aggregator(wg *sync.WaitGroup) {
 				responseTimesCh = nil
 				continue
 			}
-			t.results.ResponseTimes = append(t.results.ResponseTimes, responseTime)
+			t.results.ResponseTimes.Record(responseTime)
 
 		case slowReq, ok := <-slowRequestsCh:
 			if !ok {
@@ -341,7 +341,7 @@ func (t *Tester) processURL(ctx context.Context, task domain.URLTask) {
 	}
 
 	// Record response time
-	t.recordResponseTime(task.URL, responseTime)
+	t.responseTimesCh <- responseTime
 
 	// Create validation record
 	validation := domain.URLValidation{
@@ -591,16 +591,6 @@ func (t *Tester) recordError(rawURL, errMsg string, depth int) {
 	t.addError(errorInfo)
 }
 
-// recordResponseTime records a response time measurement
-func (t *Tester) recordResponseTime(rawURL string, responseTime time.Duration) {
-	entry := domain.ResponseTimeEntry{
-		URL:          rawURL,
-		ResponseTime: responseTime,
-		Timestamp:    time.Now(),
-	}
-	t.addResponseTime(entry)
-}
-
 // recordSlowRequest records a slow request
 func (t *Tester) recordSlowRequest(rawURL string, responseTime time.Duration, statusCode int) {
 	slowReq := domain.SlowRequest{
@@ -618,10 +608,6 @@ func (t *Tester) addValidation(validation domain.URLValidation) {
 
 func (t *Tester) addError(errInfo domain.ErrorInfo) {
 	t.errorsCh <- errInfo
-}
-
-func (t *Tester) addResponseTime(entry domain.ResponseTimeEntry) {
-	t.responseTimesCh <- entry
 }
 
 func (t *Tester) addSlowRequest(req domain.SlowRequest) {
@@ -698,14 +684,12 @@ func (t *Tester) monitor(ctx context.Context, startTime time.Time) {
 func (t *Tester) calculateResults(duration time.Duration) {
 	t.results.Duration = duration.String()
 
-	responseTimes := make([]time.Duration, len(t.results.ResponseTimes))
-	for i, entry := range t.results.ResponseTimes {
-		responseTimes[i] = entry.ResponseTime
-	}
-	if summary := stats.Summarize(responseTimes); summary.Count > 0 {
+	if summary := t.results.ResponseTimes.Summary(); summary.Count > 0 {
 		t.results.MinResponseTime = summary.Min.String()
 		t.results.MaxResponseTime = summary.Max.String()
 		t.results.AverageResponseTime = summary.Mean.String()
+		t.results.P95ResponseTime = summary.P95.String()
+		t.results.P99ResponseTime = summary.P99.String()
 	}
 
 	// Calculate rates
