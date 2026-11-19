@@ -202,3 +202,18 @@ func TestRedirect_RefusalHidesQuerySecrets(t *testing.T) {
 		t.Fatalf("Run error = %v; want a refusal without the query token", err)
 	}
 }
+
+// A load that needed no acknowledgement must not reach a public address, even
+// if the host's DNS changes after the gate's check. The refusal happens in
+// Control, before any packet is sent.
+func TestLoadClient_PrivateOnlyRefusesPublic(t *testing.T) {
+	tr, err := New(testConfig("http://127.0.0.1:1/"), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = tr.LoadClient(4, true).Get("http://93.184.216.34:9/")
+	var public *util.PublicAddressError
+	if !errors.As(err, &public) {
+		t.Fatalf("Get public address = %v, want a PublicAddressError", err)
+	}
+}

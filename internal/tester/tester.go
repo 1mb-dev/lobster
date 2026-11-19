@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/1mb-dev/goflow/pkg/ratelimit/bucket"
@@ -87,7 +88,7 @@ func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 	if config.InsecureSkipVerify {
 		logger.Warn("INSECURE: TLS certificate verification is disabled. Use only for testing with self-signed certificates!")
 	}
-	transport := newTransport(config, config.Concurrency*2)
+	transport := newTransport(config, config.Concurrency*2, util.DialControl(config.AllowPrivateIPs))
 
 	baseURL, err := url.Parse(config.BaseURL)
 	if err != nil {
@@ -720,16 +721,16 @@ func effectiveRate(rate float64, crawlDelay time.Duration) float64 {
 	return min(rate, 1/crawlDelay.Seconds())
 }
 
-// newTransport builds the HTTP transport every request goes through: the dial
-// check on each address, no proxy (a proxy would dial the target itself,
-// bypassing the check), and maxConns connections to the host.
-func newTransport(config domain.TesterConfig, maxConns int) *http.Transport {
+// newTransport builds the HTTP transport every request goes through: control
+// checks each dialed address, there is no proxy (a proxy would dial the target
+// itself, bypassing the check), and maxConns connections go to the host.
+func newTransport(config domain.TesterConfig, maxConns int, control func(string, string, syscall.RawConn) error) *http.Transport {
 	transport := &http.Transport{
 		Proxy: nil,
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
-			Control:   util.DialControl(config.AllowPrivateIPs),
+			Control:   control,
 		}).DialContext,
 		MaxIdleConns:        max(100, maxConns),
 		MaxIdleConnsPerHost: maxConns,
@@ -759,12 +760,17 @@ func (t *Tester) NewRequest(ctx context.Context, rawURL string) (*http.Request, 
 	return req, nil
 }
 
-// LoadClient returns a client with the crawl's dial check, TLS settings and
-// redirect policy, sized for maxConns concurrent connections.
-func (t *Tester) LoadClient(maxConns int) *http.Client {
+// LoadClient returns a client with the crawl's TLS settings and redirect
+// policy, sized for maxConns concurrent connections. Its dial check is the
+// crawl's, or with privateOnly it refuses every public address.
+func (t *Tester) LoadClient(maxConns int, privateOnly bool) *http.Client {
+	control := util.DialControl(t.config.AllowPrivateIPs)
+	if privateOnly {
+		control = util.PrivateOnlyDialControl()
+	}
 	return &http.Client{
 		Timeout:       t.config.RequestTimeout,
-		Transport:     newTransport(t.config, maxConns),
+		Transport:     newTransport(t.config, maxConns, control),
 		CheckRedirect: t.client.CheckRedirect,
 	}
 }

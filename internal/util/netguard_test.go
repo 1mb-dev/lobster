@@ -70,3 +70,18 @@ func TestDialControl(t *testing.T) {
 		t.Errorf("DialControl(true) refused loopback: %v", err)
 	}
 }
+
+func TestPrivateOnlyDialControl(t *testing.T) {
+	control := PrivateOnlyDialControl()
+	var public *PublicAddressError
+	for _, addr := range []string{"93.184.216.34:80", "[2606:4700:4700::1111]:443", "[::ffff:8.8.8.8]:80"} {
+		if err := control("tcp", addr, nil); !errors.As(err, &public) {
+			t.Errorf("PrivateOnlyDialControl(%s) = %v, want a PublicAddressError", addr, err)
+		}
+	}
+	for _, addr := range []string{"127.0.0.1:80", "[::1]:80", "10.0.0.1:443"} {
+		if err := control("tcp", addr, nil); err != nil {
+			t.Errorf("PrivateOnlyDialControl(%s) refused a private address: %v", addr, err)
+		}
+	}
+}

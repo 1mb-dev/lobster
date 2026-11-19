@@ -91,3 +91,33 @@ func DialControl(allowPrivate bool) func(network, address string, c syscall.RawC
 		return nil
 	}
 }
+
+// PublicAddressError is returned when a private-only dial targets a public address.
+type PublicAddressError struct {
+	Addr netip.Addr
+}
+
+func (e *PublicAddressError) Error() string {
+	return fmt.Sprintf("connection to public address %s refused: the load was not acknowledged for a public host", e.Addr)
+}
+
+// PrivateOnlyDialControl returns a net.Dialer Control function that refuses
+// every address IsBlockedAddr does not cover. A load that needed no ownership
+// acknowledgement uses it, so a host that resolves to a public address later
+// (DNS rebinding) is refused at dial time.
+func PrivateOnlyDialControl() func(network, address string, c syscall.RawConn) error {
+	return func(_, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return fmt.Errorf("dial address %q: %w", address, err)
+		}
+		addr, err := netip.ParseAddr(host)
+		if err != nil {
+			return fmt.Errorf("dial address %q: %w", address, err)
+		}
+		if !IsBlockedAddr(addr) {
+			return &PublicAddressError{Addr: addr.Unmap()}
+		}
+		return nil
+	}
+}

@@ -124,8 +124,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// The ownership gate runs before the crawl: a refused load costs only the robots.txt fetch.
+	var loadNeedsAck bool
 	if cfg.Load != "" {
-		if err = checkLoadGate(cfg.BaseURL, t.CrawlDelay(), *iOwnThis); err != nil {
+		if loadNeedsAck, err = checkLoadGate(cfg.BaseURL, t.CrawlDelay(), *iOwnThis); err != nil {
 			logger.Error("Load refused", "error", err)
 			return exitError
 		}
@@ -138,7 +139,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if cfg.Load != "" {
-		if err = runLoad(t, cfg, results, stderr, logger); err != nil {
+		if err = runLoad(t, cfg, results, !loadNeedsAck, stderr, logger); err != nil {
 			logger.Error("Load failed", "error", err)
 			return exitError
 		}
@@ -253,11 +254,13 @@ func runCrawl(t *tester.Tester, config domain.TesterConfig, duration time.Durati
 }
 
 // checkLoadGate refuses -load against a public host, or one whose robots.txt
-// sets a Crawl-delay, unless -i-own-this is set and LOBSTER_I_OWN_THIS names the host.
-func checkLoadGate(baseURL string, crawlDelay time.Duration, iOwnThis bool) error {
+// sets a Crawl-delay, unless -i-own-this is set and LOBSTER_I_OWN_THIS names
+// the host. It reports whether the acknowledgement was needed: a load that did
+// not need one must stay on private addresses (see runLoad).
+func checkLoadGate(baseURL string, crawlDelay time.Duration, iOwnThis bool) (needed bool, err error) {
 	u, err := url.Parse(baseURL)
 	if err != nil {
-		return err
+		return false, err
 	}
 	host := u.Hostname()
 	var addrs []netip.Addr
@@ -268,11 +271,14 @@ func checkLoadGate(baseURL string, crawlDelay time.Duration, iOwnThis bool) erro
 		defer cancel()
 		addrs, _ = net.DefaultResolver.LookupNetIP(ctx, "ip", host) // unresolved: NeedsAck says yes
 	}
-	return load.CheckAck(load.NeedsAck(addrs, crawlDelay), iOwnThis, os.Getenv(load.AckEnv), host)
+	needed = load.NeedsAck(addrs, crawlDelay)
+	return needed, load.CheckAck(needed, iOwnThis, os.Getenv(load.AckEnv), host)
 }
 
-// runLoad replays the crawled URLs at -rate for -load, after a complete crawl only.
-func runLoad(t *tester.Tester, cfg *domain.Config, results *domain.TestResults, stderr io.Writer, logger *slog.Logger) error {
+// runLoad replays the crawled URLs at -rate for -load, after a complete crawl
+// only. With privateOnly, every connection must go to a private address, so a
+// host that rebinds to a public one after the gate's check is refused.
+func runLoad(t *tester.Tester, cfg *domain.Config, results *domain.TestResults, privateOnly bool, stderr io.Writer, logger *slog.Logger) error {
 	if !results.CrawlComplete {
 		logger.Warn("Load skipped: the crawl is incomplete")
 		return nil
@@ -290,7 +296,7 @@ func runLoad(t *tester.Tester, cfg *domain.Config, results *domain.TestResults, 
 	})
 
 	loadResults, err := load.Run(context.Background(), load.Config{
-		Client:    t.LoadClient(load.InFlight),
+		Client:    t.LoadClient(load.InFlight, privateOnly),
 		Requester: t,
 		URLs:      urls,
 		Rate:      cfg.Rate,
