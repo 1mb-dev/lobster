@@ -5,7 +5,7 @@ BINARY_NAME=lobster
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "v0.1.0-dev")
 BUILD_DIR=.
 CMD_DIR=./cmd/lobster
-INTERNAL_PACKAGES=./internal/...
+PACKAGES=./...
 
 # Go parameters
 GOCMD=go
@@ -38,17 +38,17 @@ build:
 ## test: Run all tests under the race detector
 test:
 	@echo "Running tests..."
-	$(GOTEST) -race -timeout 120s $(INTERNAL_PACKAGES)
+	$(GOTEST) -race -timeout 120s $(PACKAGES)
 
 ## test-verbose: Run tests with verbose output
 test-verbose:
 	@echo "Running tests (verbose)..."
-	$(GOTEST) -v -race -timeout 30s $(INTERNAL_PACKAGES)
+	$(GOTEST) -v -race -timeout 30s $(PACKAGES)
 
 ## test-coverage: Run tests with coverage report
 test-coverage:
 	@echo "Running tests with coverage..."
-	$(GOTEST) -race -coverprofile=coverage.out -covermode=atomic $(INTERNAL_PACKAGES)
+	$(GOTEST) -race -coverprofile=coverage.out -covermode=atomic $(PACKAGES)
 	@echo "Coverage report generated: coverage.out"
 	@$(GOCMD) tool cover -func=coverage.out | grep total | awk '{print "Total coverage: " $$3}'
 

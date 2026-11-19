@@ -2,6 +2,7 @@ package reporter
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -405,7 +406,7 @@ func TestPrintSummary(t *testing.T) {
 	_ = t // Test verifies no panic occurs
 	results := testutil.SampleResults()
 	reporter := New(results)
-	reporter.PrintSummary()
+	reporter.PrintSummary(io.Discard)
 }
 
 func TestPrintSummary_WithErrors(t *testing.T) {
@@ -417,7 +418,7 @@ func TestPrintSummary_WithErrors(t *testing.T) {
 		{URL: "http://example.com/err3", Error: "timeout", Timestamp: time.Now()},
 	}
 	reporter := New(results)
-	reporter.PrintSummary()
+	reporter.PrintSummary(io.Discard)
 }
 
 func TestPrintSummary_WithSlowRequests(t *testing.T) {
@@ -429,5 +430,5 @@ func TestPrintSummary_WithSlowRequests(t *testing.T) {
 		{URL: "http://example.com/slow3", ResponseTime: 3 * time.Second, StatusCode: 500},
 	}
 	reporter := New(results)
-	reporter.PrintSummary()
+	reporter.PrintSummary(io.Discard)
 }

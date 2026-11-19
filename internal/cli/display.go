@@ -2,30 +2,30 @@ package cli
 
 import (
 	"fmt"
-	"os"
+	"io"
 	"strings"
 )
 
-// PrintWarningBox prints a formatted warning box to stderr.
+// PrintWarningBox prints a formatted warning box to w.
 // The box has a consistent width and styling for security/ethical warnings.
-func PrintWarningBox(title string, lines []string) {
+func PrintWarningBox(w io.Writer, title string, lines []string) {
 	const boxWidth = 68 // Inner content width
 
-	fmt.Fprintf(os.Stderr, "\n")
-	fmt.Fprintf(os.Stderr, "╔%s╗\n", strings.Repeat("═", boxWidth+2))
-	fmt.Fprintf(os.Stderr, "║ %-*s ║\n", boxWidth, CenterText(title, boxWidth))
-	fmt.Fprintf(os.Stderr, "╠%s╣\n", strings.Repeat("═", boxWidth+2))
+	fmt.Fprintf(w, "\n")
+	fmt.Fprintf(w, "╔%s╗\n", strings.Repeat("═", boxWidth+2))
+	fmt.Fprintf(w, "║ %-*s ║\n", boxWidth, CenterText(title, boxWidth))
+	fmt.Fprintf(w, "╠%s╣\n", strings.Repeat("═", boxWidth+2))
 
 	for _, line := range lines {
 		if line == "" {
-			fmt.Fprintf(os.Stderr, "║ %-*s ║\n", boxWidth, "")
+			fmt.Fprintf(w, "║ %-*s ║\n", boxWidth, "")
 		} else {
-			fmt.Fprintf(os.Stderr, "║  %-*s║\n", boxWidth-1, line)
+			fmt.Fprintf(w, "║  %-*s║\n", boxWidth-1, line)
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "╚%s╝\n", strings.Repeat("═", boxWidth+2))
-	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(w, "╚%s╝\n", strings.Repeat("═", boxWidth+2))
+	fmt.Fprintf(w, "\n")
 }
 
 // CenterText centers text within a given width.
@@ -37,10 +37,10 @@ func CenterText(text string, width int) string {
 	return strings.Repeat(" ", padding) + text + strings.Repeat(" ", width-len(text)-padding)
 }
 
-// ShowHelpMessage prints the help message to stdout.
+// ShowHelpMessage prints the help message to w.
 // The version parameter should be passed from the main package's version variable.
-func ShowHelpMessage(version string) {
-	fmt.Println(`Lobster - crawl a site you own and check each page against performance targets
+func ShowHelpMessage(w io.Writer, version string) {
+	fmt.Fprintln(w, `Lobster - crawl a site you own and check each page against performance targets
 
 USAGE:
     lobster [OPTIONS]
@@ -165,5 +165,5 @@ DOCUMENTATION:
     Report issues: https://github.com/1mb-dev/lobster/issues
 
 VERSION:
-    Lobster v` + version)
+    Lobster v`+version)
 }

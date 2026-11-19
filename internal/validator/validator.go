@@ -3,6 +3,7 @@ package validator
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -123,29 +124,29 @@ func (v *Validator) targetsMet() int {
 
 // PrintValidationReport prints one PASS or FAIL line per enabled target, the
 // crawl's completeness, and the verdict.
-func (v *Validator) PrintValidationReport() {
-	fmt.Println("\n" + strings.Repeat("=", 60))
-	fmt.Println("PERFORMANCE TARGET VALIDATION")
-	fmt.Println(strings.Repeat("=", 60))
+func (v *Validator) PrintValidationReport(w io.Writer) {
+	fmt.Fprintln(w, "\n"+strings.Repeat("=", 60))
+	fmt.Fprintln(w, "PERFORMANCE TARGET VALIDATION")
+	fmt.Fprintln(w, strings.Repeat("=", 60))
 
 	for _, target := range v.targets {
 		status := StatusFail
 		if target.Passed {
 			status = StatusPass
 		}
-		fmt.Printf("%s %-30s %s\n", status, target.Name+":", target.Actual)
-		fmt.Printf("    %s\n", target.Description)
-		fmt.Println()
+		fmt.Fprintf(w, "%s %-30s %s\n", status, target.Name+":", target.Actual)
+		fmt.Fprintf(w, "    %s\n", target.Description)
+		fmt.Fprintln(w)
 	}
 
 	if len(v.targets) == 0 {
-		fmt.Println("No performance targets enabled.")
+		fmt.Fprintln(w, "No performance targets enabled.")
 	}
 	if !v.crawlComplete {
-		fmt.Printf("FAIL Crawl incomplete: %s\n", incompleteHint(v.incompleteReason))
+		fmt.Fprintf(w, "FAIL Crawl incomplete: %s\n", incompleteHint(v.incompleteReason))
 	}
 
-	fmt.Printf("\nOverall: %s (%d/%d targets met)\n", v.status(), v.targetsMet(), len(v.targets))
+	fmt.Fprintf(w, "\nOverall: %s (%d/%d targets met)\n", v.status(), v.targetsMet(), len(v.targets))
 }
 
 func incompleteHint(reason string) string {

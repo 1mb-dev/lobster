@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -119,24 +120,24 @@ func (r *Reporter) GenerateJSON(outputPath string) error {
 }
 
 // PrintSummary prints a console summary of the results
-func (r *Reporter) PrintSummary() {
-	fmt.Printf("\n%s\n", strings.Repeat("=", 60))
-	fmt.Printf("RESULTS\n")
-	fmt.Printf("%s\n", strings.Repeat("=", 60))
-	fmt.Printf("Duration:             %s\n", r.results.Duration)
-	fmt.Printf("URLs Discovered:      %d\n", r.results.URLsDiscovered)
-	fmt.Printf("Total Requests:       %d\n", r.results.TotalRequests)
-	fmt.Printf("Successful Requests:  %d\n", r.results.SuccessfulRequests)
-	fmt.Printf("Failed Requests:      %d\n", r.results.FailedRequests)
-	fmt.Printf("Average Response Time: %s\n", r.results.AverageResponseTime)
-	fmt.Printf("Min Response Time:    %s\n", r.results.MinResponseTime)
-	fmt.Printf("Max Response Time:    %s\n", r.results.MaxResponseTime)
-	fmt.Printf("Requests/Second:      %.2f\n", r.results.RequestsPerSecond)
-	fmt.Printf("Success Rate:         %.2f%%\n", r.results.SuccessRate)
+func (r *Reporter) PrintSummary(w io.Writer) {
+	fmt.Fprintf(w, "\n%s\n", strings.Repeat("=", 60))
+	fmt.Fprintf(w, "RESULTS\n")
+	fmt.Fprintf(w, "%s\n", strings.Repeat("=", 60))
+	fmt.Fprintf(w, "Duration:             %s\n", r.results.Duration)
+	fmt.Fprintf(w, "URLs Discovered:      %d\n", r.results.URLsDiscovered)
+	fmt.Fprintf(w, "Total Requests:       %d\n", r.results.TotalRequests)
+	fmt.Fprintf(w, "Successful Requests:  %d\n", r.results.SuccessfulRequests)
+	fmt.Fprintf(w, "Failed Requests:      %d\n", r.results.FailedRequests)
+	fmt.Fprintf(w, "Average Response Time: %s\n", r.results.AverageResponseTime)
+	fmt.Fprintf(w, "Min Response Time:    %s\n", r.results.MinResponseTime)
+	fmt.Fprintf(w, "Max Response Time:    %s\n", r.results.MaxResponseTime)
+	fmt.Fprintf(w, "Requests/Second:      %.2f\n", r.results.RequestsPerSecond)
+	fmt.Fprintf(w, "Success Rate:         %.2f%%\n", r.results.SuccessRate)
 	if r.results.CrawlComplete {
-		fmt.Printf("Crawl Complete:       yes\n")
+		fmt.Fprintf(w, "Crawl Complete:       yes\n")
 	} else {
-		fmt.Printf("Crawl Complete:       no (%s)\n", r.results.IncompleteReason)
+		fmt.Fprintf(w, "Crawl Complete:       no (%s)\n", r.results.IncompleteReason)
 	}
 	for _, c := range []struct {
 		label string
@@ -147,47 +148,47 @@ func (r *Reporter) PrintSummary() {
 		{"Abandoned Requests:", r.results.AbandonedRequests},
 	} {
 		if c.n > 0 {
-			fmt.Printf("%-22s%d\n", c.label, c.n)
+			fmt.Fprintf(w, "%-22s%d\n", c.label, c.n)
 		}
 	}
 
 	if len(r.results.Errors) > 0 {
-		fmt.Printf("\n%s\n", strings.Repeat("-", 60))
-		fmt.Printf("ERRORS SUMMARY\n")
-		fmt.Printf("%s\n", strings.Repeat("-", 60))
+		fmt.Fprintf(w, "\n%s\n", strings.Repeat("-", 60))
+		fmt.Fprintf(w, "ERRORS SUMMARY\n")
+		fmt.Fprintf(w, "%s\n", strings.Repeat("-", 60))
 		errorCounts := make(map[string]int)
 		for _, err := range r.results.Errors {
 			errorCounts[err.Error]++
 		}
 		for errorMsg, count := range errorCounts {
-			fmt.Printf("  %s: %d occurrence(s)\n", errorMsg, count)
+			fmt.Fprintf(w, "  %s: %d occurrence(s)\n", errorMsg, count)
 		}
 	}
 
 	if len(r.results.SlowRequests) > 0 {
-		fmt.Printf("\n%s\n", strings.Repeat("-", 60))
-		fmt.Printf("SLOWEST REQUESTS (top 10)\n")
-		fmt.Printf("%s\n", strings.Repeat("-", 60))
+		fmt.Fprintf(w, "\n%s\n", strings.Repeat("-", 60))
+		fmt.Fprintf(w, "SLOWEST REQUESTS (top 10)\n")
+		fmt.Fprintf(w, "%s\n", strings.Repeat("-", 60))
 		for i, req := range r.results.SlowRequests {
 			if i >= 10 {
 				break
 			}
-			fmt.Printf("  %s: %s (HTTP %d)\n", req.URL, req.ResponseTime, req.StatusCode)
+			fmt.Fprintf(w, "  %s: %s (HTTP %d)\n", req.URL, req.ResponseTime, req.StatusCode)
 		}
 	}
 
-	fmt.Printf("\n%s\n", strings.Repeat("-", 60))
-	fmt.Printf("URL VALIDATION SUMMARY\n")
-	fmt.Printf("%s\n", strings.Repeat("-", 60))
+	fmt.Fprintf(w, "\n%s\n", strings.Repeat("-", 60))
+	fmt.Fprintf(w, "URL VALIDATION SUMMARY\n")
+	fmt.Fprintf(w, "%s\n", strings.Repeat("-", 60))
 	statusCounts := make(map[int]int)
 	for _, validation := range r.results.URLValidations {
 		statusCounts[validation.StatusCode]++
 	}
 
 	for status, count := range statusCounts {
-		fmt.Printf("HTTP %d: %d URL(s)\n", status, count)
+		fmt.Fprintf(w, "HTTP %d: %d URL(s)\n", status, count)
 	}
-	fmt.Printf("%s\n\n", strings.Repeat("=", 60))
+	fmt.Fprintf(w, "%s\n\n", strings.Repeat("=", 60))
 }
 
 // prepareTemplateData prepares data for HTML template rendering

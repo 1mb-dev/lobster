@@ -2,6 +2,7 @@ package validator
 
 import (
 	"encoding/json"
+	"io"
 	"math"
 	"strings"
 	"testing"
@@ -170,6 +171,6 @@ func TestPrintValidationReport(t *testing.T) {
 	for _, r := range []*domain.TestResults{results(10, 10), results(10, 1), {IncompleteReason: domain.IncompleteQueueFull}} {
 		v := New(domain.PerformanceTargets{SuccessRate: 99, RequestsPerSecond: math.SmallestNonzeroFloat64})
 		v.ValidateResults(r)
-		v.PrintValidationReport()
+		v.PrintValidationReport(io.Discard)
 	}
 }

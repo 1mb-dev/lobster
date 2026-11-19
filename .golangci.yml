@@ -26,6 +26,13 @@ linters:
     errcheck:
       check-type-assertions: true
       check-blank: false
+      # Console output goes to the stdout/stderr writers threaded through run();
+      # a failed terminal write has no recovery. Report files are written with
+      # os.WriteFile and stay checked.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
 
     govet:
       enable-all: true

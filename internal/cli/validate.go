@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
@@ -12,17 +13,17 @@ const WarnRate = 1.0
 
 // ConfirmLowRate warns about a rate below WarnRate and, on a terminal, asks to continue.
 // Rates below domain.MinRate are refused earlier, by domain.Config.Validate.
-func ConfirmLowRate(rate float64) error {
+func ConfirmLowRate(w io.Writer, rate float64) error {
 	if rate < WarnRate {
-		fmt.Fprintf(os.Stderr, "\nWARNING: Low rate limit detected (%.2f req/s)\n", rate)
-		fmt.Fprintf(os.Stderr, "This will send requests very slowly:\n")
-		fmt.Fprintf(os.Stderr, "- %.2f requests per second\n", rate)
-		fmt.Fprintf(os.Stderr, "- ~%.0f requests per minute\n", rate*60)
-		fmt.Fprintf(os.Stderr, "- Test may take a long time to complete\n\n")
+		fmt.Fprintf(w, "\nWARNING: Low rate limit detected (%.2f req/s)\n", rate)
+		fmt.Fprintf(w, "This will send requests very slowly:\n")
+		fmt.Fprintf(w, "- %.2f requests per second\n", rate)
+		fmt.Fprintf(w, "- ~%.0f requests per minute\n", rate*60)
+		fmt.Fprintf(w, "- Test may take a long time to complete\n\n")
 
 		// If interactive terminal, prompt for confirmation
 		if IsInteractiveTerminal() {
-			fmt.Fprintf(os.Stderr, "Do you want to continue with this rate? (y/N): ")
+			fmt.Fprintf(w, "Do you want to continue with this rate? (y/N): ")
 			reader := bufio.NewReader(os.Stdin)
 			response, err := reader.ReadString('\n')
 			if err != nil {
@@ -32,9 +33,9 @@ func ConfirmLowRate(rate float64) error {
 			if response != "y" && response != "yes" {
 				return fmt.Errorf("test canceled by user")
 			}
-			fmt.Fprintf(os.Stderr, "\n")
+			fmt.Fprintf(w, "\n")
 		} else {
-			fmt.Fprintf(os.Stderr, "Continuing in non-interactive mode...\n\n")
+			fmt.Fprintf(w, "Continuing in non-interactive mode...\n\n")
 		}
 	}
 

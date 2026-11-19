@@ -316,7 +316,7 @@ func TestBuildAuthConfig_Bearer(t *testing.T) {
 func TestConfirmLowRate(t *testing.T) {
 	// Rates below WarnRate prompt when stdin is a terminal, so only rates at or above it are tested.
 	for _, rate := range []float64{WarnRate, 5} {
-		if err := ConfirmLowRate(rate); err != nil {
+		if err := ConfirmLowRate(io.Discard, rate); err != nil {
 			t.Errorf("ConfirmLowRate(%g) error = %v", rate, err)
 		}
 	}
