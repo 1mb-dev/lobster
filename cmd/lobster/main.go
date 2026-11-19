@@ -108,6 +108,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		QueueSize:          cfg.QueueSize,
 		InsecureSkipVerify: cfg.InsecureSkipVerify,
 		IgnoreRobots:       cfg.IgnoreRobots,
+		AllowPrivateIPs:    *allowPrivateIPs,
 		Rate:               cfg.Rate,
 		Verbose:            cfg.Verbose,
 		NoProgress:         *noProgress,

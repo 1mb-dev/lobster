@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -53,6 +55,10 @@ type Tester struct {
 	responseTimesCh chan domain.ResponseTimeEntry
 	slowRequestsCh  chan domain.SlowRequest
 
+	// baseRefused is set by the base URL's task when the dial check or the
+	// redirect policy refuses it; read after the workers stop.
+	baseRefused error
+
 	pending  atomic.Int64 // tasks enqueued and not yet finished
 	done     chan struct{}
 	doneOnce sync.Once
@@ -79,6 +85,13 @@ func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 	// Create HTTP Transport with connection pooling for high concurrency
 	// Default net/http Transport has MaxIdleConnsPerHost=2 which bottlenecks parallel requests
 	transport := &http.Transport{
+		// No proxy: a proxy would dial the target itself, bypassing the dial check.
+		Proxy: nil,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+			Control:   util.DialControl(config.AllowPrivateIPs),
+		}).DialContext,
 		MaxIdleConns:        100,                    // Total pool size across all hosts
 		MaxIdleConnsPerHost: config.Concurrency * 2, // Allow 2x concurrency to handle bursts
 		MaxConnsPerHost:     config.Concurrency * 2, // Limit connections per host
@@ -95,20 +108,31 @@ func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 		}
 	}
 
+	baseURL, err := url.Parse(config.BaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parsing base URL: %w", err)
+	}
+	robotsParser := robots.New(config.UserAgent)
+
 	// Create HTTP client with connection pooling
 	httpClient := &http.Client{
-		Timeout:   config.RequestTimeout,
-		Transport: transport,
+		Timeout:       config.RequestTimeout,
+		Transport:     transport,
+		CheckRedirect: redirectPolicy(baseURL.Hostname(), robotsParser, config.IgnoreRobots),
 	}
 
-	// Create robots.txt parser and fetch robots.txt
-	robotsParser := robots.New(config.UserAgent)
+	// robots.txt is fetched through the same transport, without the robots recheck.
+	robotsParser.SetClient(&http.Client{
+		Timeout:       10 * time.Second,
+		Transport:     transport,
+		CheckRedirect: redirectPolicy(baseURL.Hostname(), robotsParser, true),
+	})
 	if !config.IgnoreRobots {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		if err := robotsParser.FetchAndParse(ctx, config.BaseURL); err != nil {
-			logger.Warn("Failed to fetch robots.txt, proceeding with caution", "error", err)
+		if fetchErr := robotsParser.FetchAndParse(ctx, config.BaseURL); fetchErr != nil {
+			logger.Warn("Failed to fetch robots.txt, proceeding with caution", "error", fetchErr)
 		} else if robotsParser.RobotsTxtFound() {
 			logger.Info("robots.txt found and parsed successfully")
 		} else {
@@ -197,6 +221,9 @@ func (t *Tester) Run(ctx context.Context) (*domain.TestResults, error) {
 	close(t.slowRequestsCh)
 	aggregatorWg.Wait()
 
+	if t.baseRefused != nil {
+		return nil, fmt.Errorf("base URL refused: %w", t.baseRefused)
+	}
 	t.recordCompleteness()
 
 	// Calculate final results
@@ -287,6 +314,11 @@ func (t *Tester) processURL(ctx context.Context, task domain.URLTask) {
 			atomic.AddInt64(&t.results.AbandonedRequests, 1)
 			return
 		}
+		if task.Depth == 0 && isRefusal(err) {
+			// A refused base URL ends the run with an error, not a failed page.
+			t.baseRefused = err
+			return
+		}
 		atomic.AddInt64(&t.results.TotalRequests, 1)
 		atomic.AddInt64(&t.results.FailedRequests, 1)
 		t.recordError(task.URL, fmt.Sprintf("making request: %v", err), task.Depth)
@@ -340,7 +372,7 @@ func (t *Tester) processURL(ctx context.Context, task domain.URLTask) {
 
 // makeHTTPRequestWithRetry wraps makeHTTPRequest with exponential backoff retry for 429 responses.
 // Returns the actual request duration (excluding backoff time) for accurate latency metrics.
-func (t *Tester) makeHTTPRequestWithRetry(ctx context.Context, url string) (*http.Response, time.Duration, error) {
+func (t *Tester) makeHTTPRequestWithRetry(ctx context.Context, rawURL string) (*http.Response, time.Duration, error) {
 	const (
 		maxRetries     = 4 // Max retry attempts for 429
 		initialBackoff = 1 * time.Second
@@ -353,7 +385,7 @@ func (t *Tester) makeHTTPRequestWithRetry(ctx context.Context, url string) (*htt
 	backoff := initialBackoff
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		resp, duration, err := t.makeHTTPRequest(ctx, url)
+		resp, duration, err := t.makeHTTPRequest(ctx, rawURL)
 		lastRequestDuration = duration
 
 		// If request failed (network error, etc), return error immediately
@@ -371,12 +403,12 @@ func (t *Tester) makeHTTPRequestWithRetry(ctx context.Context, url string) (*htt
 		// If this was the last attempt, return the 429 response
 		if attempt == maxRetries {
 			// Re-make request one final time to return a valid response object
-			return t.makeHTTPRequest(ctx, url)
+			return t.makeHTTPRequest(ctx, rawURL)
 		}
 
 		// Log the backoff
 		t.logger.Info("Received 429 Too Many Requests, backing off",
-			"url", util.SanitizeURLDefault(url),
+			"rawURL", util.SanitizeURLDefault(rawURL),
 			"attempt", attempt+1,
 			"backoff", backoff,
 			"max_retries", maxRetries)
@@ -401,11 +433,11 @@ func (t *Tester) makeHTTPRequestWithRetry(ctx context.Context, url string) (*htt
 }
 
 // makeHTTPRequest creates and executes an HTTP request, returning the response and duration
-func (t *Tester) makeHTTPRequest(ctx context.Context, url string) (*http.Response, time.Duration, error) {
+func (t *Tester) makeHTTPRequest(ctx context.Context, rawURL string) (*http.Response, time.Duration, error) {
 	startTime := time.Now()
 
 	// Create request
-	req, err := http.NewRequestWithContext(ctx, "GET", url, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, http.NoBody)
 	if err != nil {
 		return nil, 0, fmt.Errorf("creating request: %w", err)
 	}
@@ -543,12 +575,12 @@ func (t *Tester) discoverLinksFromResponse(resp *http.Response, task domain.URLT
 // recordError records an error encountered during testing.
 // Error messages are sanitized to hide internal infrastructure details
 // unless verbose mode is enabled.
-func (t *Tester) recordError(url, errMsg string, depth int) {
+func (t *Tester) recordError(rawURL, errMsg string, depth int) {
 	// Sanitize error message to hide internal details unless verbose
 	sanitizedErr := util.SanitizeErrorForDisplay(errMsg, t.config.Verbose)
 
 	errorInfo := domain.ErrorInfo{
-		URL:       url,
+		URL:       rawURL,
 		Error:     sanitizedErr,
 		Timestamp: time.Now(),
 		Depth:     depth,
@@ -557,9 +589,9 @@ func (t *Tester) recordError(url, errMsg string, depth int) {
 }
 
 // recordResponseTime records a response time measurement
-func (t *Tester) recordResponseTime(url string, responseTime time.Duration) {
+func (t *Tester) recordResponseTime(rawURL string, responseTime time.Duration) {
 	entry := domain.ResponseTimeEntry{
-		URL:          url,
+		URL:          rawURL,
 		ResponseTime: responseTime,
 		Timestamp:    time.Now(),
 	}
@@ -567,9 +599,9 @@ func (t *Tester) recordResponseTime(url string, responseTime time.Duration) {
 }
 
 // recordSlowRequest records a slow request
-func (t *Tester) recordSlowRequest(url string, responseTime time.Duration, statusCode int) {
+func (t *Tester) recordSlowRequest(rawURL string, responseTime time.Duration, statusCode int) {
 	slowReq := domain.SlowRequest{
-		URL:          url,
+		URL:          rawURL,
 		ResponseTime: responseTime,
 		StatusCode:   statusCode,
 	}

@@ -132,6 +132,11 @@ func TestValidateBaseURL_SpecialIPRanges(t *testing.T) {
 		{"multicast 239.x", "http://239.255.255.255", true},
 		{"reserved 240.x", "http://240.0.0.1", true},
 		{"reserved 255.x", "http://255.255.255.255", true},
+		{"benchmarking 198.18.x", "http://198.18.0.1", true},
+		{"IPv4-mapped loopback", "http://[::ffff:127.0.0.1]", true},
+		{"NAT64 loopback", "http://[64:ff9b::7f00:1]", true},
+		{"6to4 loopback", "http://[2002:7f00:1::]", true},
+		{".localhost name", "http://foo.localhost", true},
 	}
 
 	for _, tt := range tests {

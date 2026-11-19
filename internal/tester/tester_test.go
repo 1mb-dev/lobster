@@ -32,6 +32,8 @@ func testConfig(baseURL string) domain.TesterConfig {
 		MaxDepth:       1,
 		Rate:           1000, // High enough not to slow tests
 		IgnoreRobots:   true, // Skip robots.txt in tests
+		// httptest servers listen on 127.0.0.1
+		AllowPrivateIPs: true,
 	}
 }
 

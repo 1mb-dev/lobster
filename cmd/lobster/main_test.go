@@ -158,3 +158,19 @@ func TestRun_JSONKeysMatchGolden(t *testing.T) {
 		t.Errorf("JSON keys differ from %s (rerun with -update if the change is intended):\ngot:\n%s\nwant:\n%s", golden, got, want)
 	}
 }
+
+func TestRun_BaseRedirectOffHostExits2(t *testing.T) {
+	other := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer other.Close()
+	target := strings.Replace(other.URL, "127.0.0.1", "localhost", 1) + "/"
+	base := httptest.NewServer(http.RedirectHandler(target, http.StatusFound))
+	defer base.Close()
+
+	var stdout, stderr bytes.Buffer
+	if got := run(local(base.URL+"/"), &stdout, &stderr); got != exitError {
+		t.Fatalf("run = %d, want %d\n%s", got, exitError, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), target) {
+		t.Errorf("stderr does not name the final URL %s:\n%s", target, stderr.String())
+	}
+}

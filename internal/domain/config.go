@@ -87,6 +87,8 @@ type TesterConfig struct {
 	InsecureSkipVerify bool
 	// IgnoreRobots bypasses robots.txt restrictions.
 	IgnoreRobots bool
+	// AllowPrivateIPs lets the crawl connect to private and reserved addresses.
+	AllowPrivateIPs bool
 	// Verbose enables detailed logging.
 	Verbose bool
 	// NoProgress disables the progress bar.
