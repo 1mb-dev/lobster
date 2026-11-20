@@ -223,13 +223,15 @@ func TestExtractLinks_HrefAsBrowserReads(t *testing.T) {
 	}
 }
 
-// A read error cuts extraction short and is returned.
+// A read error cuts extraction short: the links read before it come back
+// with the error.
 func TestExtractLinks_ReadError(t *testing.T) {
 	c, _ := New("http://example.com", 3)
 	reset := errors.New("connection reset")
-	body := io.MultiReader(strings.NewReader(`<a href="/x">`), iotest.ErrReader(reset))
-	if _, err := c.ExtractLinks(body, page); !errors.Is(err, reset) {
-		t.Errorf("err = %v, want %v", err, reset)
+	body := io.MultiReader(strings.NewReader(`<a href="/x"></a>`), iotest.ErrReader(reset))
+	links, err := c.ExtractLinks(body, page)
+	if !errors.Is(err, reset) || !slices.Equal(links, []string{"http://example.com/x"}) {
+		t.Errorf("links %v, err %v; want [http://example.com/x] and %v", links, err, reset)
 	}
 }
 

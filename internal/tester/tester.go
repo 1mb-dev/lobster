@@ -57,9 +57,10 @@ type Tester struct {
 	// redirect policy refuses it; read after the workers stop.
 	baseRefused error
 
-	pending  atomic.Int64 // tasks enqueued and not yet finished
-	done     chan struct{}
-	doneOnce sync.Once
+	pending     atomic.Int64 // tasks enqueued and not yet finished
+	linksCutOff atomic.Int64 // pages whose body was cut off before all their links were read
+	done        chan struct{}
+	doneOnce    sync.Once
 }
 
 // New creates a new stress tester
@@ -537,10 +538,8 @@ func (t *Tester) discoverLinksFromResponse(resp *http.Response, task domain.URLT
 
 	links, readErr := t.crawler.ExtractLinks(io.LimitReader(resp.Body, maxSize), page)
 	if readErr != nil {
-		t.logger.Debug("Error reading response body for link extraction",
-			"url", util.SanitizeURLDefault(task.URL),
-			"error", readErr)
-		return 0
+		t.linksCutOff.Add(1)
+		t.recordError(task.URL, fmt.Sprintf("reading links: %v", readErr), task.Depth)
 	}
 	for _, link := range links {
 		if t.enqueue(link, task.Depth+1) {
@@ -711,6 +710,8 @@ func (t *Tester) recordCompleteness() {
 			"hint", "Increase -queue-size")
 	case t.pending.Load() > 0 || t.results.AbandonedRequests > 0:
 		t.results.IncompleteReason = domain.IncompleteDuration
+	case t.linksCutOff.Load() > 0:
+		t.results.IncompleteReason = domain.IncompleteLinksCutOff
 	default:
 		t.results.CrawlComplete = true
 	}

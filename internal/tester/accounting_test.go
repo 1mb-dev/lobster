@@ -16,12 +16,14 @@ import (
 // site serves HTML pages from a path→links map; unknown paths get 404.
 // robots, when non-empty, is served at /robots.txt; redirects maps a path to
 // its 301 target; bases maps a path to its <base href>; pad bytes of text
-// precede every page's links. hits counts page requests.
+// precede every page's links; a cutOff page stalls after its links until the
+// request ends. hits counts page requests.
 type site struct {
 	pages     map[string][]string
 	redirects map[string]string
 	bases     map[string]string
 	pad       int
+	cutOff    map[string]bool
 	robots    string
 	delay     time.Duration
 
@@ -58,6 +60,10 @@ func (s *site) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, l := range links {
 		_, _ = fmt.Fprintf(w, `<a href="%s">x</a>`, l)
+	}
+	if s.cutOff[r.URL.Path] {
+		_ = http.NewResponseController(w).Flush()
+		<-r.Context().Done()
 	}
 }
 
@@ -264,5 +270,19 @@ func TestCrawl_LinksPast64KB(t *testing.T) {
 
 	if _, hits := s.pageHits(); hits["/far"] != 1 {
 		t.Errorf("/far fetched %d times, want 1 (pages fetched: %v)", hits["/far"], hits)
+	}
+}
+
+// A page whose body is cut off after some links: those links are followed,
+// and the crawl is incomplete.
+func TestCrawl_CutOffPageKeepsLinksAndIsIncomplete(t *testing.T) {
+	s := &site{pages: map[string][]string{"/": {"/a"}, "/a": nil}, cutOff: map[string]bool{"/": true}}
+	r := crawl(t, s, "/", 10*time.Second, func(c *domain.TesterConfig) { c.RequestTimeout = 300 * time.Millisecond })
+
+	if _, hits := s.pageHits(); hits["/a"] != 1 {
+		t.Errorf("/a fetched %d times, want 1 (pages fetched: %v)", hits["/a"], hits)
+	}
+	if r.CrawlComplete || r.IncompleteReason != domain.IncompleteLinksCutOff {
+		t.Errorf("complete=%v reason=%q; want false, %q", r.CrawlComplete, r.IncompleteReason, domain.IncompleteLinksCutOff)
 	}
 }

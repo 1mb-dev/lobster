@@ -54,9 +54,9 @@ type TestResults struct {
 	RobotsBlocked int64 `json:"robots_blocked"`
 	// URLsDropped counts discovered URLs the full queue could not take.
 	URLsDropped int64 `json:"urls_dropped"`
-	// CrawlComplete is true when every discovered URL was requested: none pending, dropped or abandoned.
+	// CrawlComplete is true when every discovered URL was requested (none pending, dropped or abandoned) and every page's links were read.
 	CrawlComplete bool `json:"crawl_complete"`
-	// IncompleteReason says why the crawl is incomplete: IncompleteQueueFull or IncompleteDuration.
+	// IncompleteReason says why the crawl is incomplete: IncompleteQueueFull, IncompleteDuration or IncompleteLinksCutOff.
 	IncompleteReason string `json:"incomplete_reason,omitempty"`
 	// RequestsPerSecond is the average throughput during the test.
 	RequestsPerSecond float64 `json:"requests_per_second"`
@@ -154,8 +154,9 @@ func DefaultPerformanceTargets() PerformanceTargets {
 
 // IncompleteReason values.
 const (
-	IncompleteQueueFull = "queue_full"
-	IncompleteDuration  = "duration"
+	IncompleteQueueFull   = "queue_full"
+	IncompleteDuration    = "duration"
+	IncompleteLinksCutOff = "links_cut_off"
 )
 
 // AddURLResult constants for URL addition outcomes.

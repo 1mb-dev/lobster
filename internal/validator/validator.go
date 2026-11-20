@@ -192,6 +192,8 @@ func incompleteHint(reason string) string {
 		return "URLs were dropped from a full queue; raise -queue-size"
 	case domain.IncompleteDuration:
 		return "-duration ended before every page was fetched; raise -duration or -rate"
+	case domain.IncompleteLinksCutOff:
+		return "a page's body was cut off before all its links were read; raise -timeout or -duration"
 	default:
 		return reason
 	}

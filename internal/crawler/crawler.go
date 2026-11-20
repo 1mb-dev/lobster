@@ -56,8 +56,8 @@ func (c *Crawler) SetBaseFinalURL(final *url.URL) {
 // against the document's base URL: the first <base href>, itself resolved
 // against page, or page when there is none. page is the URL the body was
 // served from, after redirects. Only http and https links are returned. It
-// reads body to the end, holding one token at a time, and returns the read
-// error if one cut it short.
+// reads body to the end, holding one token at a time; if a read error cuts it
+// short, it returns the links read before it with the error.
 func (c *Crawler) ExtractLinks(body io.Reader, page *url.URL) ([]string, error) {
 	base, baseSet := page, false
 	var hrefs []string
@@ -66,7 +66,7 @@ func (c *Crawler) ExtractLinks(body io.Reader, page *url.URL) ([]string, error) 
 		tt := z.Next()
 		if tt == html.ErrorToken {
 			if err := z.Err(); !errors.Is(err, io.EOF) {
-				return nil, err
+				return c.resolve(hrefs, base), err
 			}
 			break
 		}

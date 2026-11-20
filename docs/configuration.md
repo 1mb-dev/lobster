@@ -193,7 +193,7 @@ lobster -url http://localhost:3000 -allow-private-ips -config targets.json -no-p
 echo "exit code: $?"
 ```
 
-A crawl is complete when every discovered URL was requested: none dropped from a full queue (raise `-queue-size`) and none cut off by `-duration` (raise `-duration` or `-rate`). The JSON report gives `crawl_complete` and, when it is false, `incomplete_reason`.
+A crawl is complete when every discovered URL was requested: none dropped from a full queue (raise `-queue-size`) and none cut off by `-duration` (raise `-duration` or `-rate`), and no page's body was cut off before all its links were read (`links_cut_off`: raise `-timeout` or `-duration`). The JSON report gives `crawl_complete` and, when it is false, `incomplete_reason`.
 
 Links are read from the first 10MB of each HTML page. A page that declares a larger `Content-Length` is not read for links, and the rest of a longer page is not read; neither makes the crawl incomplete.
 
