@@ -73,7 +73,7 @@ See [testing](testing) for the testing guide.
 ### Load
 
 - Request `i` is due at `start + i/rate`; the schedule never waits for responses, and latency is measured from the due time.
-- Up to 256 requests are in flight; a request that waits for a slot, and every request sent behind it until the schedule catches up, is counted late. No request due after the window is sent; a request still waiting for a slot, or behind one, when it ends is unsent and fails the run.
+- Up to 256 requests are in flight; a request that waits for a slot, and every request after it due before that slot came free, is counted late. No request due after the window is sent, and none waits for a slot after it; a request not sent by its end goes out only if it fell due after the latest waited-for slot came free and a slot is free, and is otherwise unsent and fails the run.
 - Ten consecutive 429 or 5xx responses abort the load.
 
 ### Connection Safety

@@ -58,9 +58,9 @@ OPTIONS:
         After a complete crawl, replay the crawled pages that responded
         200-399 at -rate for this long (e.g. 30s): requests go out on
         schedule whatever the response times, up to 256 in flight; a
-        request still waiting for a slot, or behind one, when the window
-        ends is unsent and fails the run; stops early after 10
-        consecutive 429/5xx.
+        request not sent by the end of the window is unsent and fails
+        the run, unless no wait for a slot delayed it and a slot is
+        free; stops early after 10 consecutive 429/5xx.
         A public host, or a robots.txt Crawl-delay, needs -i-own-this and
         LOBSTER_I_OWN_THIS=<host>. -rate is capped at 1000 with -load.
     -i-own-this

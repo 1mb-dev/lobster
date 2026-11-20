@@ -89,11 +89,12 @@ func (r *run) abort(reason string) {
 // cfg.Duration. The schedule does not wait for responses (open loop): each
 // request's latency runs from its intended send time, so a slow server shows
 // in the latency instead of lowering the request rate. When all InFlight slots
-// are busy, a request waits for one; it and the requests that go out behind
-// it, until the schedule is caught up, are counted late. No request due after
-// cfg.Duration is sent; a request still waiting for a slot, or still behind,
-// when cfg.Duration ends is counted unsent, and the run ends once the requests
-// in flight finish (within the client's timeout).
+// are busy, a request waits for one; it and every request after it due before
+// that slot came free are counted late. No request due after cfg.Duration is sent, and
+// none waits for a slot after it: a request not sent by then goes out only if
+// it fell due after the latest waited-for slot came free and a slot is free,
+// and is otherwise counted unsent. The run ends once the requests in flight
+// finish (within the client's timeout).
 func Run(ctx context.Context, cfg Config) (*domain.LoadResults, error) {
 	if len(cfg.URLs) == 0 {
 		return nil, fmt.Errorf("load: no URLs to replay")
@@ -116,11 +117,10 @@ func Run(ctx context.Context, cfg Config) (*domain.LoadResults, error) {
 	timer := time.NewTimer(0) // Reset without a drain needs Go 1.23+ timers (go.mod)
 	defer timer.Stop()
 
-	// behind is set when a request waits for a slot and cleared when the loop
-	// reaches a request before its intended time. While behind, requests are
-	// late (the server's backlog delayed them) and none goes out after end; a
-	// request reached after end through this loop's own lag still goes out.
-	behind := false
+	// backlogUntil is when the loop got its latest waited-for slot. Requests
+	// due before it are late, and none of them goes out after end; a later one
+	// reached after end through this loop's own lag still goes out.
+	var backlogUntil time.Time
 	due := 0
 	for ; ; due++ {
 		// Request i is due at start + i/rate whatever happened before it: a
@@ -130,23 +130,20 @@ func Run(ctx context.Context, cfg Config) (*domain.LoadResults, error) {
 		if !intended.Before(end) {
 			break
 		}
-		if time.Now().Before(intended) {
-			behind = false
-		}
 		if !sleepUntil(ctx, timer, intended) {
 			break
 		}
-		if behind && !time.Now().Before(end) {
-			break // a backlog not drained inside the window is unsent
+		if intended.Before(backlogUntil) && !time.Now().Before(end) {
+			continue // a backlog not drained inside the window is unsent
 		}
-		got, waited := acquire(windowCtx, slots, cfg.afterWait)
+		got, freedAt := acquire(windowCtx, slots, cfg.afterWait)
 		if !got {
 			break
 		}
-		if waited {
-			behind = true
+		if freedAt.After(backlogUntil) {
+			backlogUntil = freedAt
 		}
-		if behind {
+		if !freedAt.IsZero() || intended.Before(backlogUntil) {
 			r.late.Add(1)
 		}
 
@@ -175,22 +172,25 @@ func Run(ctx context.Context, cfg Config) (*domain.LoadResults, error) {
 
 // acquire takes an in-flight slot, waiting for one until windowCtx ends, and
 // runs afterWait (if set) when it got one after waiting. It reports whether it
-// got one and whether it had to wait.
-func acquire(windowCtx context.Context, slots chan<- struct{}, afterWait func()) (got, waited bool) {
+// got one and, if it had to wait, when the slot came free (zero otherwise).
+func acquire(windowCtx context.Context, slots chan<- struct{}, afterWait func()) (got bool, freedAt time.Time) {
 	select {
 	case slots <- struct{}{}:
-		return true, false
+		return true, time.Time{}
 	default:
 	}
 	select {
 	case slots <- struct{}{}:
 	case <-windowCtx.Done():
 	}
-	got = windowCtx.Err() == nil
-	if got && afterWait != nil {
+	if windowCtx.Err() != nil {
+		return false, time.Time{}
+	}
+	freedAt = time.Now()
+	if afterWait != nil {
 		afterWait()
 	}
-	return got, true
+	return true, freedAt
 }
 
 // dueCount is how many requests the schedule puts before d: those with i/rate < d.

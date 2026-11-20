@@ -2,11 +2,10 @@ package load
 
 import (
 	"context"
-	"io"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -279,61 +278,125 @@ func TestRun_SendsDueRequestReachedAfterWindow(t *testing.T) {
 	}
 }
 
-// stallTransport holds every request until release closes, then answers 200 at
-// once. An httptest server answers slower than the loop sends, so the loop
-// waits for each slot and a backlog never goes out on the free-slot path.
-type stallTransport struct {
-	release chan struct{}
+// windowRun is what a run against a stalled server observed. Run's start lies
+// between before and firstArrival; the first waited-for slot came free after
+// released, and the last one before lastFreed.
+type windowRun struct {
+	res                                       *domain.LoadResults
+	before, firstArrival, released, lastFreed time.Time
+	waits                                     int
 }
 
-func (s *stallTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	select {
-	case <-s.release:
-	case <-req.Context().Done():
-		return nil, req.Context().Err()
-	}
-	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("")), Request: req}, nil
-}
-
-func stallRun(t *testing.T, rate float64, d, releaseAt time.Duration) *domain.LoadResults {
+// runStalled runs a load against a server that holds every request until
+// releaseAt after the first arrival (none when releaseAt is 0). When holdUntil
+// is set, the first request that waited for a slot holds the loop until
+// holdUntil after the first arrival, as a client stall would.
+func runStalled(t *testing.T, rate float64, d, releaseAt, holdUntil time.Duration) windowRun {
 	t.Helper()
-	st := &stallTransport{release: make(chan struct{})}
-	time.AfterFunc(releaseAt, func() { close(st.release) })
-	cfg := Config{Client: &http.Client{Transport: st}, Requester: plainRequester{}, URLs: []string{"http://lobster.test/"}, Rate: rate, Duration: d}
+	var (
+		mu          sync.Mutex
+		w           windowRun
+		arrive      sync.Once
+		releaseOnce sync.Once
+		release     = make(chan struct{})
+	)
+	open := func() { releaseOnce.Do(func() { close(release) }) }
+	if releaseAt == 0 {
+		open()
+	}
+	client, url := h2cAgainst(t, func(_ http.ResponseWriter, r *http.Request) {
+		arrive.Do(func() {
+			mu.Lock()
+			w.firstArrival = time.Now()
+			mu.Unlock()
+			if releaseAt > 0 {
+				time.AfterFunc(releaseAt, func() {
+					mu.Lock()
+					w.released = time.Now()
+					mu.Unlock()
+					open()
+				})
+			}
+		})
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+	t.Cleanup(open) // before server.Close, which waits for the handlers
+
+	cfg := config(client, url, rate, d)
+	cfg.afterWait = func() {
+		now := time.Now()
+		w.waits++
+		w.lastFreed = now
+		if holdUntil > 0 && w.waits == 1 {
+			mu.Lock()
+			until := w.firstArrival.Add(holdUntil)
+			mu.Unlock()
+			time.Sleep(time.Until(until))
+		}
+	}
+	w.before = time.Now()
 	res, err := Run(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return res
+	mu.Lock()
+	defer mu.Unlock()
+	w.res = res
+	return w
 }
 
-// The server holds every slot from 0.256s to 0.5s, then answers at once: the
-// requests due in between go out late, behind the one that waited; once the
-// loop catches up, the rest are on time.
-func TestRun_BacklogAfterStallIsLate(t *testing.T) {
-	res := stallRun(t, 1000, time.Second, 500*time.Millisecond)
-	if res.Late < 500-InFlight || res.Late > 650-InFlight {
-		t.Errorf("late = %d; want the %d requests due from 0.256s to 0.5s, and none due after 0.65s", res.Late, 500-InFlight)
-	}
-	if res.Sent != 1000 || res.Unsent != 0 {
-		t.Errorf("sent %d, unsent %d; want 1000 and 0", res.Sent, res.Unsent)
-	}
-}
+// A request is late when it waited for a slot or fell due before a waited-for
+// slot came free; after the window, those due before it are unsent and the
+// rest still go out if a slot is free. The expected counts follow from that,
+// with the slot's time bounded by what the run observed.
+func TestRun_LateAndUnsentByCause(t *testing.T) {
+	exactly := func(n int) func(int, int) (lo, hi int) { return func(int, int) (lo, hi int) { return n, n } }
+	// From the first request that waited to the last due before its slot came free.
+	backlog := func(dueLo, dueHi int) (lo, hi int) { return dueLo - InFlight, dueHi - InFlight }
+	// The same, less the request that waited: it got its slot.
+	backlogPastWaiter := func(dueLo, dueHi int) (lo, hi int) { return dueLo - InFlight - 1, dueHi - InFlight - 1 }
 
-// The loop waits for a slot, then is held past the window while still behind:
-// the request that waited goes out, and the rest of the backlog is unsent.
-func TestRun_BacklogStopsAtWindow(t *testing.T) {
-	st := &stallTransport{release: make(chan struct{})}
-	time.AfterFunc(600*time.Millisecond, func() { close(st.release) })
-	start := time.Now()
-	var once sync.Once
-	cfg := Config{Client: &http.Client{Transport: st}, Requester: plainRequester{}, URLs: []string{"http://lobster.test/"}, Rate: 1000, Duration: time.Second,
-		afterWait: func() { once.Do(func() { time.Sleep(time.Until(start.Add(1050 * time.Millisecond))) }) }}
-	res, err := Run(context.Background(), cfg)
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name                 string
+		rate                 float64
+		d                    time.Duration
+		releaseAt, holdUntil time.Duration
+		waits                bool
+		late, unsent         func(dueLo, dueHi int) (lo, hi int)
+	}{
+		// 200 requests due in 2µs: the loop reaches most after the window.
+		{"client lag only", 1e8, 2 * time.Microsecond, 0, 0, false, exactly(0), exactly(0)},
+		// 256 slots fill by 1.024s at 250 req/s.
+		{"server stall, recovery inside the window", 250, 1500 * time.Millisecond, 1150 * time.Millisecond, 0, true, backlog, exactly(0)},
+		{"server stall across the end", 250, 1500 * time.Millisecond, 2 * time.Second, 0, false, exactly(0), exactly(375 - InFlight)},
+		{"server stall, then a client stall across the end", 250, 1500 * time.Millisecond, 1300 * time.Millisecond, 1700 * time.Millisecond, true, exactly(1), backlogPastWaiter},
+		{"one wait, then client lag inside the window", 250, 1500 * time.Millisecond, 1150 * time.Millisecond, 1350 * time.Millisecond, true, backlog, exactly(0)},
 	}
-	if res.Sent != InFlight+1 || res.Late != 1 || res.Unsent != 1000-InFlight-1 {
-		t.Errorf("sent %d, late %d, unsent %d; want %d, 1 and %d", res.Sent, res.Late, res.Unsent, InFlight+1, 1000-InFlight-1)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := runStalled(t, tt.rate, tt.d, tt.releaseAt, tt.holdUntil)
+			res := w.res
+			if due := int64(dueCount(tt.rate, tt.d)); res.Sent+res.Unsent != due {
+				t.Fatalf("sent %d + unsent %d != %d due", res.Sent, res.Unsent, due)
+			}
+			if tt.waits != (w.waits > 0) {
+				t.Fatalf("%d waits for a slot, %d failed", w.waits, res.Failed)
+			}
+			dueLo, dueHi := 0, 0
+			if w.waits > 0 {
+				dueLo = dueCount(tt.rate, w.released.Sub(w.firstArrival))
+				dueHi = dueCount(tt.rate, w.lastFreed.Sub(w.before))
+			}
+			seen := fmt.Sprintf("%d waits, %d to %d due before the slot came free, %d failed", w.waits, dueLo, dueHi, res.Failed)
+			if lo, hi := tt.late(dueLo, dueHi); res.Late < int64(lo) || res.Late > int64(hi) {
+				t.Errorf("late = %d, want %d to %d (%s)", res.Late, lo, hi, seen)
+			}
+			if lo, hi := tt.unsent(dueLo, dueHi); res.Unsent < int64(lo) || res.Unsent > int64(hi) {
+				t.Errorf("unsent = %d, want %d to %d (%s)", res.Unsent, lo, hi, seen)
+			}
+		})
 	}
 }

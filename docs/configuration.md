@@ -200,8 +200,9 @@ A crawl is complete when every discovered URL was requested: none dropped from a
 `-load 30s` runs after a complete crawl. It sends one request every `1/-rate` seconds to the crawled pages that responded 200-399, in turn:
 
 - Requests go out on schedule however slowly the server responds, and latency is measured from each request's scheduled send time, so a slow server shows in the latency instead of lowering the rate.
-- At most 256 requests are in flight. A request that waits for a free slot is counted as late, and so is every request sent behind it until the schedule catches up.
-- No request due after the `-load` window is sent. A request still waiting for a free slot, or behind one, when the window ends is counted as unsent and fails the run; the run ends once the requests in flight finish (within `-timeout`).
+- At most 256 requests are in flight. A request that waits for a free slot is counted as late, and so is every request after it due before that slot came free.
+- No request due after the `-load` window is sent. A request due inside it but not sent when it ends goes out afterwards only if no wait for a slot delayed it and a slot is free; otherwise it is counted as unsent and fails the run. The run ends once the requests in flight finish (within `-timeout`).
+- Late and unsent do not say what filled the slots: a slow server does, and so does the burst of overdue requests lobster sends after it stalls itself (on a busy machine, for example). Such a burst near the end of the window can fail the run against a server that never slowed down.
 - 429 responses are not retried. After 10 consecutive 429 or 5xx responses the load stops, and the run exits 1.
 - `-rate` is capped at 1000 with `-load`. `-concurrency` applies to the crawl only.
 
