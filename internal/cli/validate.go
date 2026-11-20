@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -24,8 +25,7 @@ func ConfirmLowRate(w io.Writer, in *os.File, rate float64) error {
 		// If interactive terminal, prompt for confirmation
 		if isTerminal(in) {
 			fmt.Fprintf(w, "Do you want to continue with this rate? (y/N): ")
-			reader := bufio.NewReader(in)
-			response, err := reader.ReadString('\n')
+			response, err := readAnswer(in)
 			if err != nil {
 				return fmt.Errorf("reading confirmation: %w", err)
 			}
@@ -40,4 +40,17 @@ func ConfirmLowRate(w io.Writer, in *os.File, rate float64) error {
 	}
 
 	return nil
+}
+
+// maxAnswer bounds the read: on Unix, isTerminal also passes a character
+// device such as /dev/zero, which never sends a newline.
+const maxAnswer = 64
+
+// readAnswer reads one line of at most maxAnswer bytes from r.
+func readAnswer(r io.Reader) (string, error) {
+	response, err := bufio.NewReader(io.LimitReader(r, maxAnswer)).ReadString('\n')
+	if errors.Is(err, io.EOF) && len(response) == maxAnswer {
+		return "", fmt.Errorf("no answer line in the first %d bytes of stdin; answer y or n, or redirect stdin from %s to run without the prompt", maxAnswer, os.DevNull)
+	}
+	return response, err
 }

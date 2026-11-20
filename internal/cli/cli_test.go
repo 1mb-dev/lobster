@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"testing/iotest"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
 )
@@ -330,6 +333,48 @@ func TestConfirmLowRate(t *testing.T) {
 		if warned := strings.Contains(out.String(), "Continuing in non-interactive mode"); warned != (rate < WarnRate) {
 			t.Errorf("ConfirmLowRate(%g) output = %q", rate, out.String())
 		}
+	}
+}
+
+func TestConfirmLowRate_EndlessInput(t *testing.T) {
+	zero, err := os.Open("/dev/zero")
+	if err != nil {
+		t.Skip(err)
+	}
+	defer func() { _ = zero.Close() }()
+	if err = ConfirmLowRate(io.Discard, zero, 0.5); err == nil || !strings.Contains(err.Error(), "no answer line") {
+		t.Errorf("ConfirmLowRate(/dev/zero) error = %v, want no answer line", err)
+	}
+}
+
+func TestReadAnswer(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      io.Reader
+		want    string
+		wantErr error
+		errText string
+	}{
+		{"answer line", strings.NewReader("y\nmore"), "y\n", nil, ""},
+		{"short answer at EOF", strings.NewReader("y"), "y", io.EOF, ""},
+		{"no newline within the cap", strings.NewReader(strings.Repeat("y", 100)), "", nil, "no answer line"},
+		{"read error after input", io.MultiReader(strings.NewReader("ye"), iotest.ErrReader(syscall.EIO)), "ye", syscall.EIO, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := readAnswer(tt.in)
+			if got != tt.want {
+				t.Errorf("readAnswer() = %q, want %q", got, tt.want)
+			}
+			switch {
+			case tt.errText != "":
+				if err == nil || !strings.Contains(err.Error(), tt.errText) {
+					t.Errorf("readAnswer() error = %v, want %q", err, tt.errText)
+				}
+			case !errors.Is(err, tt.wantErr):
+				t.Errorf("readAnswer() error = %v, want %v", err, tt.wantErr)
+			}
+		})
 	}
 }
 
