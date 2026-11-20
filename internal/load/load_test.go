@@ -221,7 +221,7 @@ func TestRun_AbortsOnMixed5xxAndConnectionErrors(t *testing.T) {
 // closed connection) is a failure that counts toward the stop, and one still
 // in flight when the abort cuts it off is neither successful nor failed.
 func TestRun_AbortsOnBodyReadErrors(t *testing.T) {
-	stall := func(w http.ResponseWriter, r *http.Request, release <-chan struct{}) {
+	stall := func(_ *testing.T, w http.ResponseWriter, r *http.Request, release <-chan struct{}) {
 		w.WriteHeader(http.StatusOK)
 		_ = http.NewResponseController(w).Flush()
 		select {
@@ -232,10 +232,10 @@ func TestRun_AbortsOnBodyReadErrors(t *testing.T) {
 	tests := []struct {
 		name    string
 		timeout time.Duration
-		handler func(w http.ResponseWriter, r *http.Request, release <-chan struct{})
+		handler func(t *testing.T, w http.ResponseWriter, r *http.Request, release <-chan struct{})
 	}{
 		{"body stalled past the timeout", 200 * time.Millisecond, stall},
-		{"body cut off", 10 * time.Second, func(w http.ResponseWriter, _ *http.Request, _ <-chan struct{}) {
+		{"body cut off", 10 * time.Second, func(t *testing.T, w http.ResponseWriter, _ *http.Request, _ <-chan struct{}) {
 			conn, _, err := http.NewResponseController(w).Hijack()
 			if err != nil {
 				t.Error(err)
@@ -244,18 +244,18 @@ func TestRun_AbortsOnBodyReadErrors(t *testing.T) {
 			_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial"))
 			_ = conn.Close()
 		}},
-		{"body pending at the abort", 10 * time.Second, func(w http.ResponseWriter, r *http.Request, release <-chan struct{}) {
+		{"body pending at the abort", 10 * time.Second, func(t *testing.T, w http.ResponseWriter, r *http.Request, release <-chan struct{}) {
 			if r.URL.Path == "/" {
 				w.WriteHeader(http.StatusServiceUnavailable)
 				return
 			}
-			stall(w, r, release)
+			stall(t, w, r, release)
 		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			release := make(chan struct{})
-			client, url := runAgainst(t, func(w http.ResponseWriter, r *http.Request) { tt.handler(w, r, release) }, 50, 3*time.Second)
+			client, url := runAgainst(t, func(w http.ResponseWriter, r *http.Request) { tt.handler(t, w, r, release) }, 50, 3*time.Second)
 			t.Cleanup(func() { close(release) }) // runs before server.Close, which waits for the handlers
 			client.Timeout = tt.timeout
 
