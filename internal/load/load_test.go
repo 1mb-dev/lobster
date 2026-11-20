@@ -31,6 +31,22 @@ func runAgainst(t *testing.T, handler http.HandlerFunc, rate float64, d time.Dur
 	return &http.Client{Transport: transport, Timeout: 10 * time.Second}, server.URL + "/"
 }
 
+// h2cAgainst serves handler over unencrypted HTTP/2: every request shares one
+// connection, so InFlight requests held at once need one connect, not InFlight.
+func h2cAgainst(t *testing.T, handler http.HandlerFunc) (*http.Client, string) {
+	t.Helper()
+	server := httptest.NewUnstartedServer(handler)
+	server.Config.Protocols = new(http.Protocols)
+	server.Config.Protocols.SetUnencryptedHTTP2(true)
+	server.Config.HTTP2 = &http.HTTP2Config{MaxConcurrentStreams: 2 * InFlight}
+	server.Start()
+	t.Cleanup(server.Close)
+	transport := &http.Transport{Protocols: new(http.Protocols)}
+	transport.Protocols.SetUnencryptedHTTP2(true)
+	t.Cleanup(transport.CloseIdleConnections)
+	return &http.Client{Transport: transport, Timeout: 10 * time.Second}, server.URL + "/"
+}
+
 func config(client *http.Client, url string, rate float64, d time.Duration) Config {
 	return Config{Client: client, Requester: plainRequester{}, URLs: []string{url, url + "a"}, Rate: rate, Duration: d}
 }
@@ -61,12 +77,12 @@ func TestRun_StallShowsInP99NotInRate(t *testing.T) {
 	start := time.Now()
 	stallFrom, stallUntil := start.Add(500*time.Millisecond), start.Add(2500*time.Millisecond)
 	var arrivals atomic.Int64
-	client, url := runAgainst(t, func(http.ResponseWriter, *http.Request) {
+	client, url := h2cAgainst(t, func(http.ResponseWriter, *http.Request) {
 		arrivals.Add(1)
 		if now := time.Now(); now.After(stallFrom) && now.Before(stallUntil) {
 			time.Sleep(time.Until(stallUntil))
 		}
-	}, 100, 4*time.Second)
+	})
 
 	res, err := Run(context.Background(), config(client, url, 100, 4*time.Second))
 	if err != nil {
@@ -84,7 +100,7 @@ func TestRun_StallShowsInP99NotInRate(t *testing.T) {
 }
 
 func TestRun_LateWhenSlotsFull(t *testing.T) {
-	client, url := runAgainst(t, func(http.ResponseWriter, *http.Request) { time.Sleep(time.Second) }, 400, 1500*time.Millisecond)
+	client, url := h2cAgainst(t, func(http.ResponseWriter, *http.Request) { time.Sleep(time.Second) })
 
 	res, err := Run(context.Background(), config(client, url, 400, 1500*time.Millisecond))
 	if err != nil {
@@ -109,12 +125,12 @@ func TestRun_LateWhenSlotsFull(t *testing.T) {
 func TestRun_StopsAtWindow(t *testing.T) {
 	var mu sync.Mutex
 	var lastArrival time.Time
-	client, url := runAgainst(t, func(http.ResponseWriter, *http.Request) {
+	client, url := h2cAgainst(t, func(http.ResponseWriter, *http.Request) {
 		mu.Lock()
 		lastArrival = time.Now()
 		mu.Unlock()
 		time.Sleep(2 * time.Second)
-	}, 400, time.Second)
+	})
 
 	start := time.Now()
 	res, err := Run(context.Background(), config(client, url, 400, time.Second))
@@ -125,15 +141,14 @@ func TestRun_StopsAtWindow(t *testing.T) {
 	mu.Lock()
 	sentUntil := lastArrival.Sub(start)
 	mu.Unlock()
-	if sentUntil > 1500*time.Millisecond {
+	if sentUntil > time.Second {
 		t.Errorf("a request arrived %v after the start of a 1s load", sentUntil)
 	}
 	if elapsed > 4*time.Second {
 		t.Errorf("Run took %v; want the 1s window plus the 2s in flight", elapsed)
 	}
-	// A loaded machine may reach fewer than InFlight sends inside the window.
-	if res.Sent > InFlight || res.Sent+res.Unsent != 400 {
-		t.Errorf("sent %d, unsent %d; want at most %d sent and %d due in all", res.Sent, res.Unsent, InFlight, 400)
+	if res.Sent != InFlight || res.Unsent != 400-InFlight {
+		t.Errorf("sent %d, unsent %d; want %d and %d", res.Sent, res.Unsent, InFlight, 400-InFlight)
 	}
 }
 
