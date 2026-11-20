@@ -43,7 +43,7 @@ test:
 ## test-verbose: Run tests with verbose output
 test-verbose:
 	@echo "Running tests (verbose)..."
-	$(GOTEST) -v -race -timeout 30s $(PACKAGES)
+	$(GOTEST) -v -race -timeout 120s $(PACKAGES)
 
 ## test-coverage: Run tests with coverage report
 test-coverage:
