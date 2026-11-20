@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `-html <path>` writes the HTML report, with no external scripts
 - `LOBSTER_AUTH_HEADER` and `-auth-header-stdin` supply the `-auth-header` value
 - Exit codes: 0 pass; 1 a failed target, an incomplete crawl, or a load that aborted or left requests unsent; 2 a usage, configuration or safety refusal, or a runtime error
-- JSON keys `crawl_complete`, `incomplete_reason`, `abandoned_requests`, `robots_blocked`, `urls_dropped`, `p95_response_time`, `p99_response_time`, `response_time_histogram` and `load`
+- JSON keys `crawl_complete`, `incomplete_reason`, `abandoned_requests`, `robots_blocked`, `urls_dropped`, `p95_response_time`, `p99_response_time`, `response_time_histogram` and `load`; under `performance_validation`, `crawl_complete`, `load_aborted`, `load_unsent` and `skipped`
 - robots.txt `Crawl-delay` lowers the crawl rate to one request per delay
 
 ### Changed
@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Config keys `follow_links`, `respect_429`, `dry_run` and `error_rate`
 - The error-rate target and the three-tier verdicts
 - The per-request `response_times` list in the JSON report
+- `performance_validation.success_rate` (percent of targets met); the top-level `success_rate` stays
 
 ### Fixed
 
