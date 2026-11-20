@@ -537,7 +537,17 @@ func (t *Tester) discoverLinksFromResponse(resp *http.Response, task domain.URLT
 		return 0
 	}
 
-	links := t.crawler.ExtractLinks(string(body), resp.Request.URL)
+	// The page's URL after redirects; a test double may leave Request unset,
+	// and then the task URL is what was asked for.
+	page, err := url.Parse(task.URL)
+	if resp.Request != nil {
+		page, err = resp.Request.URL, nil
+	}
+	if err != nil {
+		return 0
+	}
+
+	links := t.crawler.ExtractLinks(string(body), page)
 	for _, link := range links {
 		if t.enqueue(link, task.Depth+1) {
 			atomic.StoreInt64(&t.results.URLsDiscovered, int64(t.crawler.GetDiscoveredCount()))

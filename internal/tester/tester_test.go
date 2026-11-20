@@ -2,10 +2,13 @@ package tester
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1207,5 +1210,40 @@ func TestNew_RequiresRate(t *testing.T) {
 	config.Rate = 0
 	if _, err := New(config, testLogger()); err == nil {
 		t.Fatal("New() with rate 0 succeeded; every run needs a rate limiter")
+	}
+}
+
+// discover runs link discovery on a response built by hand, served from
+// served (nil: Request unset), for a task at depth on base, and returns what
+// it queued.
+func discover(t *testing.T, base string, served *url.URL, task domain.URLTask, body string) []string {
+	t.Helper()
+	config := testConfig(base)
+	config.MaxDepth = 3
+	tester, err := New(config, testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := &http.Response{
+		Header:        http.Header{"Content-Type": {"text/html"}},
+		Body:          io.NopCloser(strings.NewReader(body)),
+		ContentLength: -1,
+	}
+	if served != nil {
+		resp.Request = &http.Request{URL: served}
+	}
+	tester.discoverLinksFromResponse(resp, task)
+	var queued []string
+	for len(tester.urlQueue) > 0 {
+		queued = append(queued, (<-tester.urlQueue).URL)
+	}
+	return queued
+}
+
+// A response with no Request resolves its links against the task URL.
+func TestDiscoverLinks_NoRequestUsesTaskURL(t *testing.T) {
+	got := discover(t, "http://example.com", nil, domain.URLTask{URL: "http://example.com/dir/a", Depth: 1}, `<a href="b">`)
+	if want := []string{"http://example.com/dir/b"}; !slices.Equal(got, want) {
+		t.Errorf("queued %v, want %v", got, want)
 	}
 }
