@@ -317,10 +317,18 @@ func TestBuildAuthConfig_Bearer(t *testing.T) {
 }
 
 func TestConfirmLowRate(t *testing.T) {
-	// Rates below WarnRate prompt when stdin is a terminal, so only rates at or above it are tested.
-	for _, rate := range []float64{WarnRate, 5} {
-		if err := ConfirmLowRate(io.Discard, rate); err != nil {
-			t.Errorf("ConfirmLowRate(%g) error = %v", rate, err)
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = null.Close() }()
+	for _, rate := range []float64{0.5, WarnRate, 5} {
+		var out strings.Builder
+		if confirmErr := ConfirmLowRate(&out, null, rate); confirmErr != nil {
+			t.Errorf("ConfirmLowRate(%g) error = %v", rate, confirmErr)
+		}
+		if warned := strings.Contains(out.String(), "Continuing in non-interactive mode"); warned != (rate < WarnRate) {
+			t.Errorf("ConfirmLowRate(%g) output = %q", rate, out.String())
 		}
 	}
 }
@@ -347,9 +355,32 @@ func TestCenterText(t *testing.T) {
 	}
 }
 
-func TestIsInteractiveTerminal(_ *testing.T) {
-	// In a test environment, stdin is typically not a terminal
-	// We can't assert the exact value since it depends on how tests are run,
-	// but we can verify it doesn't panic
-	_ = IsInteractiveTerminal()
+func TestIsTerminal(t *testing.T) {
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = null.Close() }()
+	if isTerminal(null) {
+		t.Errorf("isTerminal(%s) = true, want false", os.DevNull)
+	}
+
+	file, err := os.Create(filepath.Join(t.TempDir(), "stdin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = file.Close() }()
+	if isTerminal(file) {
+		t.Error("isTerminal(regular file) = true, want false")
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	defer func() { _ = w.Close() }()
+	if isTerminal(r) {
+		t.Error("isTerminal(pipe) = true, want false")
+	}
 }
