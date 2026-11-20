@@ -217,3 +217,29 @@ func TestCheckAck(t *testing.T) {
 		}
 	}
 }
+
+// The last request is due 1ns before the window ends, so its timer wakes after
+// the end. A request the loop slept for goes out when a slot is free.
+func TestRun_SendsLastRequestOnLateWake(t *testing.T) {
+	d := 100*time.Millisecond + time.Nanosecond
+	client, url := runAgainst(t, func(http.ResponseWriter, *http.Request) {}, 10, d)
+	res, err := Run(context.Background(), config(client, url, 10, d))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Sent != 2 || res.Unsent != 0 {
+		t.Errorf("sent %d, unsent %d; want 2 and 0", res.Sent, res.Unsent)
+	}
+}
+
+// A request reached only after the window has ended is not sent.
+func TestRun_SendsNothingReachedAfterWindow(t *testing.T) {
+	client, url := runAgainst(t, func(http.ResponseWriter, *http.Request) {}, 1, time.Nanosecond)
+	res, err := Run(context.Background(), config(client, url, 1, time.Nanosecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Sent != 0 || res.Unsent != 1 {
+		t.Errorf("sent %d, unsent %d; want 0 and 1", res.Sent, res.Unsent)
+	}
+}

@@ -108,10 +108,11 @@ func Run(ctx context.Context, cfg Config) (*domain.LoadResults, error) {
 	// Nothing is sent after end: a request still waiting for a slot then is unsent.
 	windowCtx, windowCancel := context.WithDeadline(ctx, end)
 	defer windowCancel()
-	timer := time.NewTimer(0)
+	timer := time.NewTimer(0) // Reset without a drain needs Go 1.23+ timers (go.mod)
 	defer timer.Stop()
 
 	due := 0
+schedule:
 	for ; ; due++ {
 		// Request i is due at start + i/rate whatever happened before it: a
 		// token bucket would drop the sends missed while waiting for a slot,
@@ -120,7 +121,10 @@ func Run(ctx context.Context, cfg Config) (*domain.LoadResults, error) {
 		if !intended.Before(end) {
 			break
 		}
-		if !sleepUntil(windowCtx, timer, intended) {
+		// A request the loop sleeps for is sent if a slot is free, even when
+		// the timer wakes after end; one already overdue is not sent after end.
+		onTime := time.Until(intended) > 0
+		if !sleepUntil(ctx, timer, intended) || (!onTime && !time.Now().Before(end)) {
 			break
 		}
 		select {
@@ -128,12 +132,12 @@ func Run(ctx context.Context, cfg Config) (*domain.LoadResults, error) {
 		default:
 			select {
 			case slots <- struct{}{}:
-				r.late.Add(1)
 			case <-windowCtx.Done():
 			}
-		}
-		if windowCtx.Err() != nil {
-			break
+			if windowCtx.Err() != nil {
+				break schedule
+			}
+			r.late.Add(1)
 		}
 
 		r.sent.Add(1)
