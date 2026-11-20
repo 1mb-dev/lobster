@@ -205,7 +205,7 @@ Links are read from the first 10MB of each HTML page. A page that declares a lar
 - At most 256 requests are in flight. A request that waits for a free slot is counted as late, and so is every request after it due before that slot came free.
 - No request due after the `-load` window is sent. A request due inside it but not sent when it ends goes out afterwards only if no wait for a slot delayed it and a slot is free; otherwise it is counted as unsent and fails the run. The run ends once the requests in flight finish (within `-timeout`).
 - Late and unsent do not say what filled the slots: a slow server does, and so does the burst of overdue requests lobster sends after it stalls itself (on a busy machine, for example). Such a burst near the end of the window can fail the run against a server that never slowed down.
-- 429 responses are not retried. After 10 consecutive 429, 5xx or connection errors (refused, reset or timed out), the load stops, and the run exits 1.
+- 429 responses are not retried. After 10 consecutive 429, 5xx, connection errors (a connection refused, reset or timed out) or refusals (an address or redirect lobster does not allow), the load stops, and the run exits 1.
 - `-rate` is capped at 1000 with `-load`. `-concurrency` applies to the crawl only.
 
 A load against a host that resolves to a public address, or whose robots.txt sets a `Crawl-delay`, needs both `-i-own-this` and `LOBSTER_I_OWN_THIS` set to the host name. `-allow-private-ips` does not count. A load that needs neither can connect only to private addresses.

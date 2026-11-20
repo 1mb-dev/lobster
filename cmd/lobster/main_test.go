@@ -354,7 +354,7 @@ func TestRun_LoadAbortsOnConnectionErrors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, want := range []string{`"load_aborted": true`, `"abort_reason": "10 consecutive 429, 5xx or connection errors"`} {
+			for _, want := range []string{`"load_aborted": true`, `"abort_reason": "10 consecutive 429, 5xx, connection errors or refusals"`} {
 				if !strings.Contains(string(data), want) {
 					t.Errorf("JSON has no %s:\n%s", want, data)
 				}

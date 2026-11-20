@@ -209,7 +209,7 @@ func TestRun_AbortsOnMixed5xxAndConnectionErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.Aborted || res.AbortReason != fmt.Sprintf("%d consecutive 429, 5xx or connection errors", AbortAfter) {
+	if !res.Aborted || res.AbortReason != fmt.Sprintf("%d consecutive 429, 5xx, connection errors or refusals", AbortAfter) {
 		t.Errorf("aborted=%v reason=%q; want an abort on the mix", res.Aborted, res.AbortReason)
 	}
 	if res.Failed < AbortAfter || res.Successful != 0 {
@@ -292,7 +292,7 @@ func TestRecord_ConnectionErrorsCountTowardAbort(t *testing.T) {
 	}
 	r.record(time.Millisecond, 0)
 	if r.abortReason == "" {
-		t.Errorf("%d consecutive 429, 5xx or connection errors did not abort", AbortAfter)
+		t.Errorf("%d consecutive 429, 5xx, connection errors or refusals did not abort", AbortAfter)
 	}
 }
 
