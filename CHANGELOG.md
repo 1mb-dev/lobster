@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The default user agent is `lobster/<version>`; `-version` reports the module version
 - URLs robots.txt disallows, and URLs beyond `-max-depth`, are no longer counted as requests; requests cut off by `-duration` count as abandoned
 - `-output` writes the JSON file only
+- On an http base that is not redirected to https, pages reached through a same-host `https://` link are crawled over https as well, which can double the requests
 
 ### Removed
 
