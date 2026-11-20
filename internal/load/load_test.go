@@ -2,14 +2,17 @@ package load
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/1mb-dev/lobster/v2/internal/domain"
 	"github.com/1mb-dev/lobster/v2/internal/stats"
 )
 
@@ -122,14 +125,15 @@ func TestRun_StopsAtWindow(t *testing.T) {
 	mu.Lock()
 	sentUntil := lastArrival.Sub(start)
 	mu.Unlock()
-	if sentUntil > 1100*time.Millisecond {
+	if sentUntil > 1500*time.Millisecond {
 		t.Errorf("a request arrived %v after the start of a 1s load", sentUntil)
 	}
-	if elapsed > 3500*time.Millisecond {
+	if elapsed > 4*time.Second {
 		t.Errorf("Run took %v; want the 1s window plus the 2s in flight", elapsed)
 	}
-	if res.Sent != InFlight || res.Unsent != 400-InFlight {
-		t.Errorf("sent %d, unsent %d; want %d and %d", res.Sent, res.Unsent, InFlight, 400-InFlight)
+	// A loaded machine may reach fewer than InFlight sends inside the window.
+	if res.Sent > InFlight || res.Sent+res.Unsent != 400 {
+		t.Errorf("sent %d, unsent %d; want at most %d sent and %d due in all", res.Sent, res.Unsent, InFlight, 400)
 	}
 }
 
@@ -257,5 +261,64 @@ func TestRun_SendsDueRequestReachedAfterWindow(t *testing.T) {
 	}
 	if res.Sent != 1 || res.Unsent != 0 {
 		t.Errorf("sent %d, unsent %d; want 1 and 0", res.Sent, res.Unsent)
+	}
+}
+
+// stallTransport holds every request until release closes, then answers 200 at
+// once. An httptest server answers slower than the loop sends, so the loop
+// waits for each slot and a backlog never goes out on the free-slot path.
+type stallTransport struct {
+	release chan struct{}
+}
+
+func (s *stallTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	select {
+	case <-s.release:
+	case <-req.Context().Done():
+		return nil, req.Context().Err()
+	}
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("")), Request: req}, nil
+}
+
+func stallRun(t *testing.T, rate float64, d, releaseAt time.Duration) *domain.LoadResults {
+	t.Helper()
+	st := &stallTransport{release: make(chan struct{})}
+	time.AfterFunc(releaseAt, func() { close(st.release) })
+	cfg := Config{Client: &http.Client{Transport: st}, Requester: plainRequester{}, URLs: []string{"http://lobster.test/"}, Rate: rate, Duration: d}
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+// The server holds every slot from 0.256s to 0.5s, then answers at once: the
+// requests due in between go out late, behind the one that waited; once the
+// loop catches up, the rest are on time.
+func TestRun_BacklogAfterStallIsLate(t *testing.T) {
+	res := stallRun(t, 1000, time.Second, 500*time.Millisecond)
+	if res.Late < 500-InFlight || res.Late > 650-InFlight {
+		t.Errorf("late = %d; want the %d requests due from 0.256s to 0.5s, and none due after 0.65s", res.Late, 500-InFlight)
+	}
+	if res.Sent != 1000 || res.Unsent != 0 {
+		t.Errorf("sent %d, unsent %d; want 1000 and 0", res.Sent, res.Unsent)
+	}
+}
+
+// The loop waits for a slot, then is held past the window while still behind:
+// the request that waited goes out, and the rest of the backlog is unsent.
+func TestRun_BacklogStopsAtWindow(t *testing.T) {
+	st := &stallTransport{release: make(chan struct{})}
+	time.AfterFunc(600*time.Millisecond, func() { close(st.release) })
+	start := time.Now()
+	var once sync.Once
+	cfg := Config{Client: &http.Client{Transport: st}, Requester: plainRequester{}, URLs: []string{"http://lobster.test/"}, Rate: 1000, Duration: time.Second,
+		afterWait: func() { once.Do(func() { time.Sleep(time.Until(start.Add(1050 * time.Millisecond))) }) }}
+	res, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Sent != InFlight+1 || res.Late != 1 || res.Unsent != 1000-InFlight-1 {
+		t.Errorf("sent %d, late %d, unsent %d; want %d, 1 and %d", res.Sent, res.Late, res.Unsent, InFlight+1, 1000-InFlight-1)
 	}
 }

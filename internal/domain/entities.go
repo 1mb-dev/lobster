@@ -203,9 +203,9 @@ type LoadResults struct {
 	Successful int64 `json:"successful_requests"`
 	// Failed counts requests with a transport error or a status outside 200-399.
 	Failed int64 `json:"failed_requests"`
-	// Late counts requests that waited for an in-flight slot past their intended send time.
+	// Late counts requests that waited for an in-flight slot, and those sent behind them before the schedule caught up.
 	Late int64 `json:"late"`
-	// Unsent counts requests due in the window that found no free slot before it ended.
+	// Unsent counts requests due in the window that were not sent: still waiting for a slot, or behind one, when it ended, or cut off by an abort.
 	Unsent int64 `json:"requests_unsent"`
 	// Aborted is true when consecutive 429/5xx responses stopped the load.
 	Aborted bool `json:"load_aborted"`
