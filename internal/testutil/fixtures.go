@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
+	"github.com/1mb-dev/lobster/v2/internal/stats"
 )
 
 // SampleResults returns a complete test results fixture for use in tests.
@@ -58,18 +59,7 @@ func SampleResults() *domain.TestResults {
 				StatusCode:   200,
 			},
 		},
-		ResponseTimes: []domain.ResponseTimeEntry{
-			{
-				URL:          "http://example.com",
-				ResponseTime: 100 * time.Millisecond,
-				Timestamp:    time.Now(),
-			},
-			{
-				URL:          "http://example.com/fast",
-				ResponseTime: 50 * time.Millisecond,
-				Timestamp:    time.Now(),
-			},
-		},
+		ResponseTimes: Histogram(100*time.Millisecond, 50*time.Millisecond),
 	}
 }
 
@@ -86,7 +76,7 @@ func MinimalResults() *domain.TestResults {
 		URLValidations:     []domain.URLValidation{},
 		Errors:             []domain.ErrorInfo{},
 		SlowRequests:       []domain.SlowRequest{},
-		ResponseTimes:      []domain.ResponseTimeEntry{},
+		ResponseTimes:      Histogram(),
 	}
 }
 
@@ -96,6 +86,15 @@ func EmptyResults() *domain.TestResults {
 		URLValidations: []domain.URLValidation{},
 		Errors:         []domain.ErrorInfo{},
 		SlowRequests:   []domain.SlowRequest{},
-		ResponseTimes:  []domain.ResponseTimeEntry{},
+		ResponseTimes:  Histogram(),
 	}
+}
+
+// Histogram returns a histogram holding durations.
+func Histogram(durations ...time.Duration) *stats.Histogram {
+	h := stats.NewHistogram()
+	for _, d := range durations {
+		h.Record(d)
+	}
+	return h
 }

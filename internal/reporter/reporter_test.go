@@ -2,12 +2,15 @@ package reporter
 
 import (
 	"encoding/json"
+	"io"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
+	"github.com/1mb-dev/lobster/v2/internal/stats"
 	"github.com/1mb-dev/lobster/v2/internal/testutil"
 )
 
@@ -167,9 +170,12 @@ func TestGenerateHTML_Success(t *testing.T) {
 		t.Error("Expected HTML to contain test URL")
 	}
 
-	// Verify Chart.js is included
-	if !strings.Contains(html, "Chart") {
-		t.Error("Expected HTML to include Chart.js code")
+	// The report is self-contained: CSS bars, no script.
+	if strings.Contains(html, "<script") {
+		t.Error("HTML report contains a script")
+	}
+	if !strings.Contains(html, `class="bar"`) {
+		t.Error("HTML report has no response-time bars")
 	}
 }
 
@@ -202,14 +208,16 @@ func TestPrepareTemplateData(t *testing.T) {
 		t.Error("Expected StatusDistribution to have entries")
 	}
 
-	// Verify ResponseTimesMs conversion
-	if len(data.ResponseTimesMs) != len(results.ResponseTimes) {
-		t.Errorf("Expected %d response times, got %d", len(results.ResponseTimes), len(data.ResponseTimesMs))
+	// One bar per non-empty bucket; the fullest bucket's bar is full width.
+	if len(data.LatencyBars) != len(results.ResponseTimes.Buckets()) {
+		t.Errorf("Expected %d latency bars, got %d", len(results.ResponseTimes.Buckets()), len(data.LatencyBars))
 	}
-
-	// Verify conversion to milliseconds (100ms → 100.0)
-	if data.ResponseTimesMs[0] != 100.0 {
-		t.Errorf("Expected first response time 100.0ms, got %.1f", data.ResponseTimesMs[0])
+	var full bool
+	for _, bar := range data.LatencyBars {
+		full = full || bar.Width == 100
+	}
+	if !full {
+		t.Errorf("no bar at 100%% width: %+v", data.LatencyBars)
 	}
 }
 
@@ -276,9 +284,9 @@ func TestGetHTMLTemplate(t *testing.T) {
 		}
 	}
 
-	// Verify Chart.js reference
-	if !strings.Contains(tmpl, "chart.js") {
-		t.Error("Expected template to reference Chart.js")
+	// No external assets: nothing loaded over http(s)
+	if regexp.MustCompile(`(?i)(src|href)\s*=\s*"https?://`).MatchString(tmpl) {
+		t.Error("template loads an asset over http(s)")
 	}
 }
 
@@ -385,7 +393,7 @@ func TestPrepareTemplateData_EmptyResults(t *testing.T) {
 		URLValidations: []domain.URLValidation{},
 		Errors:         []domain.ErrorInfo{},
 		SlowRequests:   []domain.SlowRequest{},
-		ResponseTimes:  []domain.ResponseTimeEntry{},
+		ResponseTimes:  stats.NewHistogram(),
 	}
 	reporter := New(results)
 
@@ -396,8 +404,8 @@ func TestPrepareTemplateData_EmptyResults(t *testing.T) {
 		t.Errorf("Expected empty status distribution, got %d entries", len(data.StatusDistribution))
 	}
 
-	if len(data.ResponseTimesMs) != 0 {
-		t.Errorf("Expected empty response times, got %d entries", len(data.ResponseTimesMs))
+	if len(data.LatencyBars) != 0 {
+		t.Errorf("Expected no latency bars, got %d", len(data.LatencyBars))
 	}
 }
 
@@ -405,7 +413,7 @@ func TestPrintSummary(t *testing.T) {
 	_ = t // Test verifies no panic occurs
 	results := testutil.SampleResults()
 	reporter := New(results)
-	reporter.PrintSummary()
+	reporter.PrintSummary(io.Discard)
 }
 
 func TestPrintSummary_WithErrors(t *testing.T) {
@@ -417,7 +425,7 @@ func TestPrintSummary_WithErrors(t *testing.T) {
 		{URL: "http://example.com/err3", Error: "timeout", Timestamp: time.Now()},
 	}
 	reporter := New(results)
-	reporter.PrintSummary()
+	reporter.PrintSummary(io.Discard)
 }
 
 func TestPrintSummary_WithSlowRequests(t *testing.T) {
@@ -429,5 +437,5 @@ func TestPrintSummary_WithSlowRequests(t *testing.T) {
 		{URL: "http://example.com/slow3", ResponseTime: 3 * time.Second, StatusCode: 500},
 	}
 	reporter := New(results)
-	reporter.PrintSummary()
+	reporter.PrintSummary(io.Discard)
 }

@@ -8,16 +8,15 @@ package cli
 type ConfigOptions struct {
 	BaseURL            string
 	Duration           string
+	Load               string
 	Timeout            string
 	UserAgent          string
 	OutputFile         string
+	HTMLFile           string
 	Rate               float64
 	Concurrency        int
 	MaxDepth           int
 	QueueSize          int
-	FollowLinks        bool
-	Respect429         bool
-	DryRun             bool
 	Verbose            bool
 	InsecureSkipVerify bool
 	IgnoreRobots       bool
@@ -26,4 +25,5 @@ type ConfigOptions struct {
 	AuthHeader         string
 	AuthPasswordStdin  bool
 	AuthTokenStdin     bool
+	AuthHeaderStdin    bool
 }

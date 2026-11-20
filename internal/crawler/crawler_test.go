@@ -1,10 +1,28 @@
 package crawler
 
 import (
+	"errors"
+	"io"
+	"net/url"
+	"slices"
+	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
 )
+
+// page is the URL the bodies in these tests were served from.
+var page = &url.URL{Scheme: "http", Host: "example.com", Path: "/"}
+
+func extract(t *testing.T, c *Crawler, body string, page *url.URL) []string {
+	t.Helper()
+	links, err := c.ExtractLinks(strings.NewReader(body), page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return links
+}
 
 func TestNew_Success(t *testing.T) {
 	c, err := New("http://example.com", 3)
@@ -37,15 +55,15 @@ func TestExtractLinks_BasicHTML(t *testing.T) {
 		</body>
 	</html>`
 
-	links := c.ExtractLinks(html)
+	links := extract(t, c, html, page)
 
 	if len(links) != 3 {
 		t.Errorf("Expected 3 links, got %d", len(links))
 	}
 
 	expectedLinks := map[string]bool{
-		"/page1":                   true,
-		"/page2":                   true,
+		"http://example.com/page1": true,
+		"http://example.com/page2": true,
 		"http://example.com/page3": true,
 	}
 
@@ -60,7 +78,7 @@ func TestExtractLinks_DoubleQuotes(t *testing.T) {
 	c, _ := New("http://example.com", 3)
 
 	html := `<a href="http://example.com/double">Link</a>`
-	links := c.ExtractLinks(html)
+	links := extract(t, c, html, page)
 
 	if len(links) != 1 {
 		t.Fatalf("Expected 1 link, got %d", len(links))
@@ -74,7 +92,7 @@ func TestExtractLinks_SingleQuotes(t *testing.T) {
 	c, _ := New("http://example.com", 3)
 
 	html := `<a href='http://example.com/single'>Link</a>`
-	links := c.ExtractLinks(html)
+	links := extract(t, c, html, page)
 
 	if len(links) != 1 {
 		t.Fatalf("Expected 1 link, got %d", len(links))
@@ -88,14 +106,14 @@ func TestExtractLinks_HTMLEntities(t *testing.T) {
 	c, _ := New("http://example.com", 3)
 
 	html := `<a href="/path?param1=value&amp;param2=value">Link</a>`
-	links := c.ExtractLinks(html)
+	links := extract(t, c, html, page)
 
 	if len(links) != 1 {
 		t.Fatalf("Expected 1 link, got %d", len(links))
 	}
 
 	// Should decode &amp; to &
-	expected := "/path?param1=value&param2=value"
+	expected := "http://example.com/path?param1=value&param2=value"
 	if links[0] != expected {
 		t.Errorf("Expected '%s', got '%s'", expected, links[0])
 	}
@@ -114,10 +132,106 @@ func TestExtractLinks_InvalidLinks(t *testing.T) {
 		</body>
 	</html>`
 
-	links := c.ExtractLinks(html)
+	links := extract(t, c, html, page)
 
 	if len(links) != 0 {
 		t.Errorf("Expected 0 valid links, got %d: %v", len(links), links)
+	}
+}
+
+// Only <a> elements are followed, whatever their other attributes, quotes or
+// case; nothing in a comment, script or style is a link.
+func TestExtractLinks_AnchorsOnly(t *testing.T) {
+	c, _ := New("http://example.com", 3)
+
+	body := `<link rel="icon" href="/favicon.ico">
+		<link rel="stylesheet" href="/s.css">
+		<area shape="rect" href="/area"><abbr title="x">y</abbr>
+		<a href="/a">a</a> <a class="x" href='/b'>b</a> <A HREF="/c">c</A>
+		<a
+		  data-href="/no" href = "/d">d</a> <a href="/it's">e</a>
+		<a title="a > b" href="/gt">f</a> <a onclick="if(a>b)go()" href="/js">g</a>
+		<a title="see href='/y'" href="/x">h</a> <a href=/pricing>i</a>
+		<a href="/q?a=1&amp;b=2">j</a> <a href="/self"/>
+		<!-- <a href="/comment">k</a> -->
+		<script>var s = '<a href="/script">';</script>
+		<style>/* <a href="/style"> */</style>`
+	got := strings.Join(extract(t, c, body, page), " ")
+	want := "http://example.com/a http://example.com/b http://example.com/c http://example.com/d http://example.com/it's " +
+		"http://example.com/gt http://example.com/js http://example.com/x http://example.com/pricing " +
+		"http://example.com/q?a=1&b=2 http://example.com/self"
+	if got != want {
+		t.Errorf("links = %q,\nwant %q", got, want)
+	}
+}
+
+// Links resolve against the first <base href>, itself resolved against the
+// page, wherever the links appear; without one, against the page.
+func TestExtractLinks_BaseHref(t *testing.T) {
+	c, _ := New("http://example.com", 3)
+	docs := &url.URL{Scheme: "http", Host: "example.com", Path: "/docs/x"}
+
+	tests := []struct{ name, body, want string }{
+		{"no base", `<a href="about">`, "http://example.com/docs/about"},
+		{"root base", `<base href="/"><a href="about">`, "http://example.com/about"},
+		{"base after the link", `<a href="about"><base href="/">`, "http://example.com/about"},
+		{"relative base", `<base href="v2/"><a href="about">`, "http://example.com/docs/v2/about"},
+		{"first base wins", `<base href="/one/"><base href="/two/"><a href="about">`, "http://example.com/one/about"},
+		{"base without href", `<base target="_top"><base href="/"><a href="about">`, "http://example.com/about"},
+		{"absolute path ignores base", `<base href="/one/"><a href="/about">`, "http://example.com/about"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := strings.Join(extract(t, c, tt.body, docs), " "); got != tt.want {
+				t.Errorf("links = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// lobster runs no scripts, so links inside <noscript> are followed, wherever
+// the noscript sits and whether or not it is closed.
+func TestExtractLinks_Noscript(t *testing.T) {
+	c, _ := New("http://example.com", 3)
+
+	tests := []struct{ name, body, want string }{
+		{"in body", `<noscript><a href="/nojs">x</a></noscript><a href="/after">y</a>`, "http://example.com/nojs http://example.com/after"},
+		{"in head", `<head><noscript><a href="/h"></noscript></head><body><a href="/after">`, "http://example.com/h http://example.com/after"},
+		{"unclosed", `<noscript><a href="/u"><p><a href="/after">`, "http://example.com/u http://example.com/after"},
+		{"script inside", `<noscript><script>'<a href="/s">'</script><a href="/n"></noscript>`, "http://example.com/n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := strings.Join(extract(t, c, tt.body, page), " "); got != tt.want {
+				t.Errorf("links = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// An href is read as a browser reads it: tabs and line breaks anywhere are
+// dropped, and only http and https links, in any case, are kept.
+func TestExtractLinks_HrefAsBrowserReads(t *testing.T) {
+	c, _ := New("http://example.com", 3)
+
+	body := "<a href=\"/docs/\ngetting-started\">a</a> <a href=\"/t\tab\">b</a> <a href=\"/c\r\nr\">c</a>" +
+		`<a href="JavaScript:void(0)">d</a> <a href="MAILTO:x@example.com">e</a> <a href="tel:+15550100">f</a>` +
+		"<a href=\"java\nscript:alert(1)\">g</a> <a href=\"data:text/html,x\">h</a> <a href=\"HTTP://example.com/up\">i</a>"
+	got := strings.Join(extract(t, c, body, page), " ")
+	if want := "http://example.com/docs/getting-started http://example.com/tab http://example.com/cr http://example.com/up"; got != want {
+		t.Errorf("links = %q,\nwant %q", got, want)
+	}
+}
+
+// A read error cuts extraction short: the links read before it come back
+// with the error.
+func TestExtractLinks_ReadError(t *testing.T) {
+	c, _ := New("http://example.com", 3)
+	reset := errors.New("connection reset")
+	body := io.MultiReader(strings.NewReader(`<a href="/x"></a>`), iotest.ErrReader(reset))
+	links, err := c.ExtractLinks(body, page)
+	if !errors.Is(err, reset) || !slices.Equal(links, []string{"http://example.com/x"}) {
+		t.Errorf("links %v, err %v; want [http://example.com/x] and %v", links, err, reset)
 	}
 }
 
@@ -135,6 +249,10 @@ func TestIsValidLink(t *testing.T) {
 		{"javascript", "javascript:void(0)", false},
 		{"mailto", "mailto:test@example.com", false},
 		{"fragment only", "#section", false},
+		{"javascript, mixed case", "JavaScript:void(0)", false},
+		{"mailto, upper case", "MAILTO:test@example.com", false},
+		{"tel", "tel:+15550100", false},
+		{"http, upper case", "HTTP://example.com/page", true},
 		{"empty", "", false},
 	}
 
@@ -320,5 +438,106 @@ func TestGetDroppedCount(t *testing.T) {
 	discoveredCount := c.GetDiscoveredCount()
 	if discoveredCount != 4 {
 		t.Errorf("Expected discovered count 4, got %d", discoveredCount)
+	}
+}
+
+// A link is queued on the base origin or its http to https upgrade; on an
+// https base, an http link on port 80 is queued as https. want is the queued
+// URL, empty when the link is refused.
+func TestAddURL_SchemeDowngrade(t *testing.T) {
+	tests := []struct {
+		name, base, final, link, want string
+	}{
+		{"https base, http link", "https://example.com", "", "http://example.com/x", "https://example.com/x"},
+		{"https base, http link on port 80", "https://example.com", "", "http://example.com:80/x", "https://example.com/x"},
+		{"https base, http link on another port", "https://example.com", "", "http://example.com:8080/x", ""},
+		{"https base on another port, http link", "https://example.com:8443", "", "http://example.com/x", ""},
+		{"http base served over https, https link", "http://example.com", "https://example.com/", "https://example.com/x", "https://example.com/x"},
+		{"http base served over https, https link on port 443", "http://example.com", "https://example.com/", "https://example.com:443/x", "https://example.com/x"},
+		{"http base on port 80 served over https, https link", "http://example.com:80", "https://example.com/", "https://EXAMPLE.com:443/x", "https://example.com/x"},
+		{"http base on an IPv6 address served over https, https link", "http://[::1]:80", "https://[::1]/", "https://[::1]:443/x", "https://[::1]/x"},
+		{"http base served over http, https link", "http://example.com", "http://example.com/", "https://example.com:443/account", "https://example.com/account"},
+		{"http base served over http, http link", "http://example.com", "http://example.com/", "http://example.com/x", "http://example.com/x"},
+		{"http base served over https, http link", "http://example.com", "https://example.com/", "http://example.com:80/x", "https://example.com/x"},
+		{"same scheme", "https://example.com", "", "https://example.com/x", "https://example.com/x"},
+		{"same scheme, default port spelled out", "https://example.com", "", "https://EXAMPLE.com:443/x", "https://example.com/x"},
+		{"upgrade on a custom port", "http://example.com:8080", "", "https://example.com:8080/x", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := New(tt.base, 3)
+			if tt.final != "" {
+				final, _ := url.Parse(tt.final)
+				c.SetBaseFinalURL(final)
+			}
+			queue := make(chan domain.URLTask, 1)
+			res := c.AddURL(tt.link, 1, queue)
+			got := ""
+			if res.Added {
+				got = (<-queue).URL
+			}
+			if got != tt.want {
+				t.Errorf("AddURL(%s) on %s queued %q, want %q", tt.link, tt.base, got, tt.want)
+			}
+		})
+	}
+}
+
+// On a crawl served over https, the http:80 and https:443 spellings of a page
+// are one URL: an http base that redirects to https is not crawled twice.
+func TestAddURL_SchemePairIsOnePage(t *testing.T) {
+	tests := []struct{ base, final, first, second string }{
+		{"http://example.com", "https://example.com/", "http://example.com/", "https://example.com/"},
+		{"http://example.com", "https://example.com/", "https://example.com/a", "http://example.com/a"},
+		{"http://example.com:80", "https://example.com/", "http://example.com:80/a?q=1", "https://example.com:443/a?q=1"},
+		{"https://example.com", "", "https://example.com/a", "http://example.com/a"},
+	}
+	for _, tt := range tests {
+		c, _ := New(tt.base, 3)
+		if tt.final != "" {
+			final, _ := url.Parse(tt.final)
+			c.SetBaseFinalURL(final)
+		}
+		queue := make(chan domain.URLTask, 2)
+		if res := c.AddURL(tt.first, 1, queue); !res.Added {
+			t.Fatalf("%s on %s: %s", tt.first, tt.base, res.Reason)
+		}
+		if res := c.AddURL(tt.second, 1, queue); res.Reason != domain.AddURLDuplicate {
+			t.Errorf("%s after %s on %s: %s, want %s", tt.second, tt.first, tt.base, res.Reason, domain.AddURLDuplicate)
+		}
+	}
+}
+
+// No link is downgraded, and discovery order does not change what is queued:
+// on a base served over http, http and https are two pages; on one served over
+// https, an http link is the https page, the base included.
+func TestAddURL_NoDowngradeWhateverTheOrder(t *testing.T) {
+	tests := []struct {
+		name, final string
+		want        []string
+	}{
+		{"base stayed on http", "http://example.com/", []string{"http://example.com/", "http://example.com/p", "https://example.com/", "https://example.com/p"}},
+		{"base redirected to https", "https://example.com/home", []string{"http://example.com/", "https://example.com/p"}},
+	}
+	links := []string{"http://example.com/p", "https://example.com/p", "https://example.com/"}
+	for _, tt := range tests {
+		for _, order := range [][]string{links, {links[2], links[1], links[0]}} {
+			c, _ := New("http://example.com", 3)
+			queue := make(chan domain.URLTask, 8)
+			c.AddURL("http://example.com", 0, queue) // the base, queued before it is fetched
+			final, _ := url.Parse(tt.final)
+			c.SetBaseFinalURL(final)
+			for _, link := range order {
+				c.AddURL(link, 1, queue)
+			}
+			var got []string
+			for len(queue) > 0 {
+				got = append(got, (<-queue).URL)
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("%s, %v: queued %v, want %v", tt.name, order, got, tt.want)
+			}
+		}
 	}
 }

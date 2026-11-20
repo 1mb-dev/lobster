@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
+	"github.com/1mb-dev/lobster/v2/internal/stats"
 )
 
 //go:embed templates/report.html
@@ -65,7 +67,16 @@ type TemplateData struct {
 	URLValidations      []URLValidationEntry
 	SlowRequests        []SlowRequestEntry
 	Errors              []domain.ErrorInfo
-	ResponseTimesMs     []float64
+	P95ResponseTime     string
+	P99ResponseTime     string
+	LatencyBars         []LatencyBar
+}
+
+// LatencyBar is one response-time histogram bucket drawn as a CSS bar.
+type LatencyBar struct {
+	Label string  // the bucket's upper bound, e.g. "≤ 12.3ms"
+	Count uint64  // requests in the bucket
+	Width float64 // bar width, percent of the fullest bucket
 }
 
 // New creates a new report generator
@@ -119,58 +130,80 @@ func (r *Reporter) GenerateJSON(outputPath string) error {
 }
 
 // PrintSummary prints a console summary of the results
-func (r *Reporter) PrintSummary() {
-	fmt.Printf("\n%s\n", strings.Repeat("=", 60))
-	fmt.Printf("STRESS TEST RESULTS\n")
-	fmt.Printf("%s\n", strings.Repeat("=", 60))
-	fmt.Printf("Duration:             %s\n", r.results.Duration)
-	fmt.Printf("URLs Discovered:      %d\n", r.results.URLsDiscovered)
-	fmt.Printf("Total Requests:       %d\n", r.results.TotalRequests)
-	fmt.Printf("Successful Requests:  %d\n", r.results.SuccessfulRequests)
-	fmt.Printf("Failed Requests:      %d\n", r.results.FailedRequests)
-	fmt.Printf("Average Response Time: %s\n", r.results.AverageResponseTime)
-	fmt.Printf("Min Response Time:    %s\n", r.results.MinResponseTime)
-	fmt.Printf("Max Response Time:    %s\n", r.results.MaxResponseTime)
-	fmt.Printf("Requests/Second:      %.2f\n", r.results.RequestsPerSecond)
-	fmt.Printf("Success Rate:         %.2f%%\n", r.results.SuccessRate)
+func (r *Reporter) PrintSummary(w io.Writer) {
+	fmt.Fprintf(w, "\n%s\n", strings.Repeat("=", 60))
+	fmt.Fprintf(w, "RESULTS\n")
+	fmt.Fprintf(w, "%s\n", strings.Repeat("=", 60))
+	fmt.Fprintf(w, "Duration:             %s\n", r.results.Duration)
+	fmt.Fprintf(w, "URLs Discovered:      %d\n", r.results.URLsDiscovered)
+	fmt.Fprintf(w, "Total Requests:       %d\n", r.results.TotalRequests)
+	fmt.Fprintf(w, "Successful Requests:  %d\n", r.results.SuccessfulRequests)
+	fmt.Fprintf(w, "Failed Requests:      %d\n", r.results.FailedRequests)
+	fmt.Fprintf(w, "Average Response Time: %s\n", r.results.AverageResponseTime)
+	fmt.Fprintf(w, "Min Response Time:    %s\n", r.results.MinResponseTime)
+	fmt.Fprintf(w, "Max Response Time:    %s\n", r.results.MaxResponseTime)
+	fmt.Fprintf(w, "p95 / p99:            %s / %s\n", r.results.P95ResponseTime, r.results.P99ResponseTime)
+	fmt.Fprintf(w, "Requests/Second:      %.2f\n", r.results.RequestsPerSecond)
+	fmt.Fprintf(w, "Success Rate:         %.2f%%\n", r.results.SuccessRate)
+	if r.results.CrawlComplete {
+		fmt.Fprintf(w, "Crawl Complete:       yes\n")
+	} else {
+		fmt.Fprintf(w, "Crawl Complete:       no (%s)\n", r.results.IncompleteReason)
+	}
+	for _, c := range []struct {
+		label string
+		n     int64
+	}{
+		{"Robots Blocked:", r.results.RobotsBlocked},
+		{"URLs Dropped:", r.results.URLsDropped},
+		{"Abandoned Requests:", r.results.AbandonedRequests},
+	} {
+		if c.n > 0 {
+			fmt.Fprintf(w, "%-22s%d\n", c.label, c.n)
+		}
+	}
 
 	if len(r.results.Errors) > 0 {
-		fmt.Printf("\n%s\n", strings.Repeat("-", 60))
-		fmt.Printf("ERRORS SUMMARY\n")
-		fmt.Printf("%s\n", strings.Repeat("-", 60))
+		fmt.Fprintf(w, "\n%s\n", strings.Repeat("-", 60))
+		fmt.Fprintf(w, "ERRORS SUMMARY\n")
+		fmt.Fprintf(w, "%s\n", strings.Repeat("-", 60))
 		errorCounts := make(map[string]int)
 		for _, err := range r.results.Errors {
 			errorCounts[err.Error]++
 		}
 		for errorMsg, count := range errorCounts {
-			fmt.Printf("  %s: %d occurrence(s)\n", errorMsg, count)
+			fmt.Fprintf(w, "  %s: %d occurrence(s)\n", errorMsg, count)
 		}
 	}
 
 	if len(r.results.SlowRequests) > 0 {
-		fmt.Printf("\n%s\n", strings.Repeat("-", 60))
-		fmt.Printf("SLOWEST REQUESTS (top 10)\n")
-		fmt.Printf("%s\n", strings.Repeat("-", 60))
+		fmt.Fprintf(w, "\n%s\n", strings.Repeat("-", 60))
+		fmt.Fprintf(w, "SLOWEST REQUESTS (top 10)\n")
+		fmt.Fprintf(w, "%s\n", strings.Repeat("-", 60))
 		for i, req := range r.results.SlowRequests {
 			if i >= 10 {
 				break
 			}
-			fmt.Printf("  %s: %s (HTTP %d)\n", req.URL, req.ResponseTime, req.StatusCode)
+			fmt.Fprintf(w, "  %s: %s (HTTP %d)\n", req.URL, req.ResponseTime, req.StatusCode)
 		}
 	}
 
-	fmt.Printf("\n%s\n", strings.Repeat("-", 60))
-	fmt.Printf("URL VALIDATION SUMMARY\n")
-	fmt.Printf("%s\n", strings.Repeat("-", 60))
+	fmt.Fprintf(w, "\n%s\n", strings.Repeat("-", 60))
+	fmt.Fprintf(w, "URL VALIDATION SUMMARY\n")
+	fmt.Fprintf(w, "%s\n", strings.Repeat("-", 60))
 	statusCounts := make(map[int]int)
 	for _, validation := range r.results.URLValidations {
 		statusCounts[validation.StatusCode]++
 	}
 
 	for status, count := range statusCounts {
-		fmt.Printf("HTTP %d: %d URL(s)\n", status, count)
+		fmt.Fprintf(w, "HTTP %d: %d URL(s)\n", status, count)
 	}
-	fmt.Printf("%s\n\n", strings.Repeat("=", 60))
+
+	if l := r.results.Load; l != nil {
+		printLoad(w, l)
+	}
+	fmt.Fprintf(w, "%s\n\n", strings.Repeat("=", 60))
 }
 
 // prepareTemplateData prepares data for HTML template rendering
@@ -223,11 +256,7 @@ func (r *Reporter) prepareTemplateData() *TemplateData {
 		})
 	}
 
-	// Convert response times to milliseconds for charting
-	responseTimesMs := make([]float64, 0, len(r.results.ResponseTimes))
-	for _, entry := range r.results.ResponseTimes {
-		responseTimesMs = append(responseTimesMs, float64(entry.ResponseTime.Nanoseconds())/1000000)
-	}
+	latencyBars := latencyBars(r.results.ResponseTimes.Buckets())
 
 	// Determine success rate class
 	successRateClass := "success-high"
@@ -253,8 +282,27 @@ func (r *Reporter) prepareTemplateData() *TemplateData {
 		URLValidations:      urlValidations,
 		SlowRequests:        slowRequests,
 		Errors:              r.results.Errors,
-		ResponseTimesMs:     responseTimesMs,
+		P95ResponseTime:     r.results.P95ResponseTime,
+		P99ResponseTime:     r.results.P99ResponseTime,
+		LatencyBars:         latencyBars,
 	}
+}
+
+// latencyBars scales each bucket's bar to the fullest bucket.
+func latencyBars(buckets []stats.Bucket) []LatencyBar {
+	var most uint64
+	for _, b := range buckets {
+		most = max(most, b.Count)
+	}
+	bars := make([]LatencyBar, len(buckets))
+	for i, b := range buckets {
+		bars[i] = LatencyBar{
+			Label: "≤ " + b.UpperBound.Round(10*time.Microsecond).String(),
+			Count: b.Count,
+			Width: float64(b.Count) / float64(most) * 100,
+		}
+	}
+	return bars
 }
 
 // statusGroupFromCode returns the status group CSS class for a given HTTP status code.
@@ -272,4 +320,26 @@ func statusGroupFromCode(status int) string {
 // getHTMLTemplate returns the HTML template string from embedded file
 func (r *Reporter) getHTMLTemplate() string {
 	return reportTemplate
+}
+
+// printLoad prints the -load phase's section of the console summary.
+func printLoad(w io.Writer, l *domain.LoadResults) {
+	fmt.Fprintf(w, "\n%s\n", strings.Repeat("-", 60))
+	fmt.Fprintf(w, "LOAD PHASE\n")
+	fmt.Fprintf(w, "%s\n", strings.Repeat("-", 60))
+	fmt.Fprintf(w, "Duration:             %s\n", l.Duration)
+	fmt.Fprintf(w, "Target Rate:          %.2f req/s\n", l.TargetRate)
+	fmt.Fprintf(w, "Achieved Rate:        %.2f req/s\n", l.AchievedRate)
+	fmt.Fprintf(w, "Requests Sent:        %d\n", l.Sent)
+	fmt.Fprintf(w, "Successful Requests:  %d\n", l.Successful)
+	fmt.Fprintf(w, "Failed Requests:      %d\n", l.Failed)
+	fmt.Fprintf(w, "Late Requests:        %d\n", l.Late)
+	fmt.Fprintf(w, "Unsent Requests:      %d\n", l.Unsent)
+	fmt.Fprintf(w, "Success Rate:         %.2f%%\n", l.SuccessRate)
+	fmt.Fprintf(w, "Average Response Time: %s\n", l.AverageResponseTime)
+	fmt.Fprintf(w, "p95 / p99:            %s / %s\n", l.P95ResponseTime, l.P99ResponseTime)
+	fmt.Fprintf(w, "Latency is measured from each request's scheduled send time.\n")
+	if l.Aborted {
+		fmt.Fprintf(w, "Aborted:              %s\n", l.AbortReason)
+	}
 }

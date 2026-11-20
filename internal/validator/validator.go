@@ -3,213 +3,206 @@ package validator
 
 import (
 	"fmt"
-	"sort"
+	"io"
 	"strings"
 	"time"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
+	"github.com/1mb-dev/lobster/v2/internal/stats"
+)
+
+// Verdicts reported under the overall_status key.
+const (
+	StatusPass = "PASS"
+	StatusFail = "FAIL"
 )
 
 // Validator validates test results against performance targets
 type Validator struct {
 	targets          []domain.PerformanceTarget
+	skipped          []string
 	targetConfig     domain.PerformanceTargets
-	enableComparison bool
-	comparisonTarget string
+	crawlComplete    bool
+	incompleteReason string
+	loadAbortReason  string
+	loadUnsent       int64
 }
 
 // New creates a new performance validator
 func New(targets domain.PerformanceTargets) *Validator {
 	return &Validator{
-		targets:          make([]domain.PerformanceTarget, 0),
-		targetConfig:     targets,
-		enableComparison: false,
+		targets:      make([]domain.PerformanceTarget, 0),
+		targetConfig: targets,
 	}
 }
 
-// NewWithComparison creates a validator with competitive comparison enabled
-func NewWithComparison(targets domain.PerformanceTargets, comparisonTarget string) *Validator {
-	return &Validator{
-		targets:          make([]domain.PerformanceTarget, 0),
-		targetConfig:     targets,
-		enableComparison: true,
-		comparisonTarget: comparisonTarget,
-	}
-}
-
-// ValidateResults validates the test results against performance targets
+// ValidateResults judges results against each enabled (non-zero) target and
+// records whether the crawl completed. With a load phase, the targets judge
+// the load and the crawl is judged by completeness and success rate. Without
+// one, the requests-per-second target is skipped: a crawl's rate is set by -rate.
 func (v *Validator) ValidateResults(results *domain.TestResults) {
 	v.targets = make([]domain.PerformanceTarget, 0)
+	v.skipped = nil
+	v.crawlComplete = results.CrawlComplete
+	v.incompleteReason = results.IncompleteReason
+	v.loadAbortReason = ""
+	v.loadUnsent = 0
+	tc := v.targetConfig
 
-	// Parse response times for calculations
-	responseTimes := make([]time.Duration, len(results.ResponseTimes))
-	for i, entry := range results.ResponseTimes {
-		responseTimes[i] = entry.ResponseTime
+	l := results.Load
+	if l == nil {
+		if tc.RequestsPerSecond > 0 {
+			v.skipped = append(v.skipped, "Requests per Second: judged only on a -load phase")
+		}
+		v.addTargets("", results.ResponseTimes.Summary(), results.TotalRequests, results.SuccessfulRequests)
+		return
 	}
 
-	var avgResponseTime, p95ResponseTime, p99ResponseTime time.Duration
-	if len(responseTimes) > 0 {
-		// Calculate average
-		var total time.Duration
-		for _, rt := range responseTimes {
-			total += rt
-		}
-		avgResponseTime = total / time.Duration(len(responseTimes))
-
-		// Calculate percentiles using proper sorting
-		sort.Slice(responseTimes, func(i, j int) bool {
-			return responseTimes[i] < responseTimes[j]
-		})
-
-		p95Index := int(float64(len(responseTimes)) * 0.95)
-		p99Index := int(float64(len(responseTimes)) * 0.99)
-
-		if p95Index >= len(responseTimes) {
-			p95Index = len(responseTimes) - 1
-		}
-		if p99Index >= len(responseTimes) {
-			p99Index = len(responseTimes) - 1
-		}
-
-		p95ResponseTime = responseTimes[p95Index]
-		p99ResponseTime = responseTimes[p99Index]
+	if l.Aborted {
+		v.loadAbortReason = l.AbortReason
 	}
+	v.loadUnsent = l.Unsent
+	v.addSuccess("Crawl Success Rate", results.TotalRequests, results.SuccessfulRequests)
+	if tc.RequestsPerSecond > 0 {
+		v.add("Load Requests per Second",
+			fmt.Sprintf("≥ %.1f req/s", tc.RequestsPerSecond),
+			fmt.Sprintf("%.1f req/s", l.AchievedRate),
+			l.AchievedRate >= tc.RequestsPerSecond)
+	}
+	v.addTargets("Load ", l.ResponseTimes.Summary(), l.Successful+l.Failed, l.Successful)
+}
 
-	// Throughput validation
-	v.targets = append(v.targets, domain.PerformanceTarget{
-		Name:        "Requests per Second",
-		Target:      fmt.Sprintf("≥ %.1f req/s", v.targetConfig.RequestsPerSecond),
-		Actual:      fmt.Sprintf("%.1f req/s", results.RequestsPerSecond),
-		Description: fmt.Sprintf("Target: >%.1f req/s for optimal throughput", v.targetConfig.RequestsPerSecond),
-		Passed:      results.RequestsPerSecond >= v.targetConfig.RequestsPerSecond,
-	})
+// addTargets adds the latency and success-rate targets, their names prefixed.
+func (v *Validator) addTargets(prefix string, s stats.Summary, total, successful int64) {
+	tc := v.targetConfig
+	v.addLatency(prefix+"Average Response Time", s.Mean, s.Count, tc.AvgResponseTimeMs)
+	v.addLatency(prefix+"95th Percentile Response Time", s.P95, s.Count, tc.P95ResponseTimeMs)
+	v.addLatency(prefix+"99th Percentile Response Time", s.P99, s.Count, tc.P99ResponseTimeMs)
+	v.addSuccess(prefix+"Success Rate", total, successful)
+}
 
-	// Average response time
-	avgMs := float64(avgResponseTime.Nanoseconds()) / 1e6
-	v.targets = append(v.targets, domain.PerformanceTarget{
-		Name:        "Average Response Time",
-		Target:      fmt.Sprintf("< %.1fms", v.targetConfig.AvgResponseTimeMs),
-		Actual:      fmt.Sprintf("%.1fms", avgMs),
-		Description: fmt.Sprintf("Target: <%.1fms for excellent user experience", v.targetConfig.AvgResponseTimeMs),
-		Passed:      avgMs < v.targetConfig.AvgResponseTimeMs,
-	})
+// addSuccess adds a minimum success-rate target; with no requests it fails.
+func (v *Validator) addSuccess(name string, total, successful int64) {
+	if v.targetConfig.SuccessRate <= 0 {
+		return
+	}
+	target := fmt.Sprintf("≥ %.1f%%", v.targetConfig.SuccessRate)
+	if total == 0 {
+		v.add(name, target, "no requests", false)
+		return
+	}
+	rate := float64(successful) / float64(total) * 100
+	v.add(name, target, fmt.Sprintf("%.2f%%", rate), rate >= v.targetConfig.SuccessRate)
+}
 
-	// 95th percentile response time
-	p95Ms := float64(p95ResponseTime.Nanoseconds()) / 1e6
-	v.targets = append(v.targets, domain.PerformanceTarget{
-		Name:        "95th Percentile Response Time",
-		Target:      fmt.Sprintf("< %.1fms", v.targetConfig.P95ResponseTimeMs),
-		Actual:      fmt.Sprintf("%.1fms", p95Ms),
-		Description: fmt.Sprintf("Target: <%.1fms for consistent performance", v.targetConfig.P95ResponseTimeMs),
-		Passed:      p95Ms < v.targetConfig.P95ResponseTimeMs,
-	})
+// addLatency adds a maximum-latency target; with no measured requests it fails.
+func (v *Validator) addLatency(name string, actual time.Duration, count int, targetMs float64) {
+	if targetMs <= 0 {
+		return
+	}
+	target := fmt.Sprintf("≤ %.1fms", targetMs)
+	if count == 0 {
+		v.add(name, target, "no requests", false)
+		return
+	}
+	actualMs := float64(actual.Nanoseconds()) / 1e6
+	v.add(name, target, fmt.Sprintf("%.1fms", actualMs), actualMs <= targetMs)
+}
 
-	// 99th percentile response time
-	p99Ms := float64(p99ResponseTime.Nanoseconds()) / 1e6
+func (v *Validator) add(name, target, actual string, passed bool) {
 	v.targets = append(v.targets, domain.PerformanceTarget{
-		Name:        "99th Percentile Response Time",
-		Target:      fmt.Sprintf("< %.1fms", v.targetConfig.P99ResponseTimeMs),
-		Actual:      fmt.Sprintf("%.1fms", p99Ms),
-		Description: fmt.Sprintf("Target: <%.1fms even for worst-case scenarios", v.targetConfig.P99ResponseTimeMs),
-		Passed:      p99Ms < v.targetConfig.P99ResponseTimeMs,
-	})
-
-	// Success rate
-	successRate := (float64(results.SuccessfulRequests) / float64(results.TotalRequests)) * 100
-	v.targets = append(v.targets, domain.PerformanceTarget{
-		Name:        "Success Rate",
-		Target:      fmt.Sprintf("> %.1f%%", v.targetConfig.SuccessRate),
-		Actual:      fmt.Sprintf("%.2f%%", successRate),
-		Description: fmt.Sprintf("Target: >%.1f%% successful requests for production readiness", v.targetConfig.SuccessRate),
-		Passed:      successRate > v.targetConfig.SuccessRate,
-	})
-
-	// Error rate
-	errorRate := float64(results.FailedRequests) / float64(results.TotalRequests) * 100
-	v.targets = append(v.targets, domain.PerformanceTarget{
-		Name:        "Error Rate",
-		Target:      fmt.Sprintf("< %.1f%%", v.targetConfig.ErrorRate),
-		Actual:      fmt.Sprintf("%.2f%%", errorRate),
-		Description: fmt.Sprintf("Target: <%.1f%% for production reliability", v.targetConfig.ErrorRate),
-		Passed:      errorRate < v.targetConfig.ErrorRate,
+		Name:        name,
+		Target:      target,
+		Actual:      actual,
+		Description: "Target: " + target,
+		Passed:      passed,
 	})
 }
 
-// PrintValidationReport prints a detailed performance validation report
-func (v *Validator) PrintValidationReport() {
-	fmt.Println("\n" + strings.Repeat("=", 60))
-	fmt.Println("PERFORMANCE TARGET VALIDATION")
-	fmt.Println(strings.Repeat("=", 60))
-
-	passed := 0
-	total := len(v.targets)
-
+// Passed reports the verdict: the crawl completed, a load phase (if any) was
+// not aborted and sent every scheduled request, and every enabled target passed.
+func (v *Validator) Passed() bool {
+	if !v.crawlComplete || v.loadAbortReason != "" || v.loadUnsent > 0 {
+		return false
+	}
 	for _, target := range v.targets {
-		status := "FAIL"
+		if !target.Passed {
+			return false
+		}
+	}
+	return true
+}
+
+func (v *Validator) status() string {
+	if v.Passed() {
+		return StatusPass
+	}
+	return StatusFail
+}
+
+func (v *Validator) targetsMet() int {
+	met := 0
+	for _, target := range v.targets {
 		if target.Passed {
-			status = "PASS"
-			passed++
+			met++
 		}
-
-		fmt.Printf("%s %-30s %s\n", status, target.Name+":", target.Actual)
-		fmt.Printf("    %s\n", target.Description)
-		fmt.Println()
 	}
-
-	fmt.Printf("Overall: %d/%d targets met (%.1f%%)\n", passed, total, float64(passed)/float64(total)*100)
-
-	switch {
-	case passed == total:
-		fmt.Println("ALL PERFORMANCE TARGETS MET! Application is production-ready.")
-	case passed >= total*3/4:
-		fmt.Println("WARNING: Most targets met, but some optimization may be needed.")
-	default:
-		fmt.Println("Significant performance improvements needed before production.")
-	}
-
-	if v.enableComparison && v.comparisonTarget != "" {
-		v.printCompetitiveAnalysis()
-	}
+	return met
 }
 
-// printCompetitiveAnalysis prints competitive comparison if enabled
-func (v *Validator) printCompetitiveAnalysis() {
-	fmt.Println("\nCOMPETITIVE ANALYSIS")
-	fmt.Println(strings.Repeat("=", 60))
-
-	// Check if we have performance metrics
-	hasGoodPerf := false
-	hasGoodThroughput := false
+// PrintValidationReport prints one PASS or FAIL line per enabled target, the
+// crawl's completeness, and the verdict.
+func (v *Validator) PrintValidationReport(w io.Writer) {
+	fmt.Fprintln(w, "\n"+strings.Repeat("=", 60))
+	fmt.Fprintln(w, "PERFORMANCE TARGET VALIDATION")
+	fmt.Fprintln(w, strings.Repeat("=", 60))
 
 	for _, target := range v.targets {
-		if target.Name == "95th Percentile Response Time" && target.Passed {
-			fmt.Printf("Meeting p95 latency targets vs %s\n", v.comparisonTarget)
-			hasGoodPerf = true
+		status := StatusFail
+		if target.Passed {
+			status = StatusPass
 		}
-		if target.Name == "Requests per Second" && target.Passed {
-			fmt.Printf("Meeting throughput targets vs %s\n", v.comparisonTarget)
-			hasGoodThroughput = true
-		}
+		fmt.Fprintf(w, "%s %-30s %s\n", status, target.Name+":", target.Actual)
+		fmt.Fprintf(w, "    %s\n", target.Description)
+		fmt.Fprintln(w)
 	}
 
-	if !hasGoodPerf {
-		fmt.Printf("WARNING: Response times need improvement to match %s\n", v.comparisonTarget)
+	for _, skipped := range v.skipped {
+		fmt.Fprintf(w, "SKIP %s\n\n", skipped)
 	}
-	if !hasGoodThroughput {
-		fmt.Printf("WARNING: Throughput needs improvement to match %s\n", v.comparisonTarget)
+	if len(v.targets) == 0 {
+		fmt.Fprintln(w, "No performance targets enabled.")
+	}
+	if !v.crawlComplete {
+		fmt.Fprintf(w, "FAIL Crawl incomplete: %s\n", incompleteHint(v.incompleteReason))
+	}
+	if v.loadAbortReason != "" {
+		fmt.Fprintf(w, "FAIL Load aborted: %s\n", v.loadAbortReason)
+	}
+	if v.loadUnsent > 0 && v.loadAbortReason == "" {
+		fmt.Fprintf(w, "FAIL Load fell behind: %d requests unsent\n", v.loadUnsent)
+	}
+
+	fmt.Fprintf(w, "\nOverall: %s (%d/%d targets met)\n", v.status(), v.targetsMet(), len(v.targets))
+}
+
+func incompleteHint(reason string) string {
+	switch reason {
+	case domain.IncompleteQueueFull:
+		return "URLs were dropped from a full queue; raise -queue-size"
+	case domain.IncompleteDuration:
+		return "-duration ended before every page was fetched; raise -duration or -rate"
+	case domain.IncompleteLinksCutOff:
+		return "a page's body was cut off before all its links were read; raise -timeout or -duration"
+	default:
+		return reason
 	}
 }
 
-// GetValidationSummary returns a summary of the validation results
+// GetValidationSummary returns the verdict and per-target results for the JSON report.
 func (v *Validator) GetValidationSummary() map[string]interface{} {
-	passed := 0
-	total := len(v.targets)
-
 	targetDetails := make([]map[string]interface{}, len(v.targets))
 	for i, target := range v.targets {
-		if target.Passed {
-			passed++
-		}
 		targetDetails[i] = map[string]interface{}{
 			"name":        target.Name,
 			"target":      target.Target,
@@ -220,22 +213,13 @@ func (v *Validator) GetValidationSummary() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"targets_met":    passed,
-		"total_targets":  total,
-		"success_rate":   float64(passed) / float64(total) * 100,
-		"overall_status": v.getOverallStatus(passed, total),
+		"targets_met":    v.targetsMet(),
+		"total_targets":  len(v.targets),
+		"crawl_complete": v.crawlComplete,
+		"load_aborted":   v.loadAbortReason != "",
+		"load_unsent":    v.loadUnsent,
+		"skipped":        append([]string{}, v.skipped...),
+		"overall_status": v.status(),
 		"targets":        targetDetails,
-	}
-}
-
-// getOverallStatus returns the overall validation status
-func (v *Validator) getOverallStatus(passed, total int) string {
-	switch {
-	case passed == total:
-		return "PRODUCTION_READY"
-	case passed >= total*3/4:
-		return "MOSTLY_READY"
-	default:
-		return "NEEDS_IMPROVEMENT"
 	}
 }

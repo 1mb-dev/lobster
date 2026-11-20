@@ -19,6 +19,13 @@ type Parser struct {
 	allowPaths     []string
 	crawlDelay     time.Duration
 	robotsTxtFound bool
+	client         *http.Client
+}
+
+// SetClient sets the client FetchAndParse uses, so robots.txt is fetched
+// through the same transport (dial checks, no proxy) as the crawl.
+func (p *Parser) SetClient(c *http.Client) {
+	p.client = c
 }
 
 // New creates a new robots.txt parser
@@ -42,9 +49,9 @@ func (p *Parser) FetchAndParse(ctx context.Context, baseURL string) error {
 	// Construct robots.txt URL
 	robotsURL := fmt.Sprintf("%s://%s/robots.txt", parsedURL.Scheme, parsedURL.Host)
 
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: 10 * time.Second,
+	client := p.client
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
 	}
 
 	// Create request with context

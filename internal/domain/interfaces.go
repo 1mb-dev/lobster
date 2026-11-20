@@ -1,13 +1,23 @@
-// Package domain defines core domain types and interfaces for the load testing tool.
+// Package domain defines core domain types and interfaces for lobster's crawl, checks and load.
 package domain
 
-import "context"
+import (
+	"context"
+	"io"
+	"net/url"
+)
 
 // URLCrawler defines the interface for URL discovery and link extraction.
 // Implementations handle URL validation, deduplication, and queue management.
 type URLCrawler interface {
-	// ExtractLinks parses HTML body and returns valid links found.
-	ExtractLinks(body string) []string
+	// ExtractLinks returns the links in an HTML body served from page,
+	// resolved against the body's <base href> or page.
+	ExtractLinks(body io.Reader, page *url.URL) ([]string, error)
+
+	// SetBaseFinalURL records the URL the base page was served from, after
+	// redirects; when it is https, the base origin's http links are fetched
+	// over https.
+	SetBaseFinalURL(final *url.URL)
 
 	// AddURL adds a URL to the discovery queue if valid and not already discovered.
 	// Returns an AddURLResult with the outcome and reason.

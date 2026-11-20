@@ -1,9 +1,18 @@
-// Package domain defines core domain types and entities for the load testing tool.
+// Package domain defines core domain types and entities for lobster's crawl, checks and load.
 package domain
 
 import (
 	"fmt"
+	"math"
 	"time"
+)
+
+// Rate limits, in requests per second.
+const (
+	// MinRate is the lowest accepted rate.
+	MinRate = 0.1
+	// MaxLoadRate is the highest rate a -load run accepts.
+	MaxLoadRate = 1000
 )
 
 // AuthConfig represents authentication configuration for HTTP requests.
@@ -33,17 +42,21 @@ type Config struct {
 	PerformanceTargets PerformanceTargets `json:"performance_targets"`
 	// Auth contains authentication configuration (optional).
 	Auth *AuthConfig `json:"auth,omitempty"`
-	// BaseURL is the starting URL for the stress test (required).
+	// BaseURL is the URL the crawl starts from (required).
 	BaseURL string `json:"base_url"`
-	// Duration is the test duration as a Go duration string (e.g., "2m", "30s").
+	// Duration is the crawl's time ceiling as a Go duration string (e.g., "2m", "30s").
 	Duration string `json:"duration"`
+	// Load is how long the -load phase replays the crawled URLs; empty means no load phase.
+	Load string `json:"load"`
 	// Timeout is the HTTP request timeout as a Go duration string.
 	Timeout string `json:"timeout"`
-	// UserAgent is the User-Agent header sent with each request.
+	// UserAgent is the User-Agent header sent with each request; empty means lobster/<version>.
 	UserAgent string `json:"user_agent"`
-	// OutputFile is the path to write the report (HTML or JSON based on extension).
+	// OutputFile is the path of the JSON results file (none when empty).
 	OutputFile string `json:"output_file"`
-	// Rate is the maximum requests per second per worker (0 = unlimited).
+	// HTMLFile is the path of the HTML report (none when empty).
+	HTMLFile string `json:"html_file"`
+	// Rate is the maximum requests per second, shared by all workers (at least MinRate).
 	Rate float64 `json:"rate"`
 	// Concurrency is the number of parallel workers making requests.
 	Concurrency int `json:"concurrency"`
@@ -51,12 +64,6 @@ type Config struct {
 	MaxDepth int `json:"max_depth"`
 	// QueueSize is the maximum number of URLs to queue for testing.
 	QueueSize int `json:"queue_size"`
-	// FollowLinks enables recursive link discovery from HTML pages.
-	FollowLinks bool `json:"follow_links"`
-	// Respect429 enables exponential backoff on HTTP 429 responses.
-	Respect429 bool `json:"respect_429"`
-	// DryRun discovers URLs without making test requests.
-	DryRun bool `json:"dry_run"`
 	// Verbose enables detailed logging output.
 	Verbose bool `json:"verbose"`
 	// InsecureSkipVerify skips TLS certificate validation (requires LOBSTER_INSECURE_TLS=true).
@@ -65,18 +72,18 @@ type Config struct {
 	IgnoreRobots bool `json:"ignore_robots"`
 }
 
-// TesterConfig represents the internal configuration for the stress tester.
+// TesterConfig represents the internal configuration for the Tester.
 // This is converted from Config after parsing and validation.
 type TesterConfig struct {
 	// RequestTimeout is the parsed timeout duration for HTTP requests.
 	RequestTimeout time.Duration
 	// Auth contains authentication settings.
 	Auth *AuthConfig
-	// BaseURL is the starting URL for the stress test.
+	// BaseURL is the URL the crawl starts from.
 	BaseURL string
 	// UserAgent is the User-Agent header value.
 	UserAgent string
-	// Rate is the maximum requests per second per worker.
+	// Rate is the maximum requests per second, shared by all workers.
 	Rate float64
 	// Concurrency is the number of parallel workers.
 	Concurrency int
@@ -86,16 +93,12 @@ type TesterConfig struct {
 	QueueSize int
 	// MaxResponseSize is the maximum response body to read (default 10MB).
 	MaxResponseSize int64
-	// FollowLinks enables link discovery from responses.
-	FollowLinks bool
-	// Respect429 enables backoff on rate limit responses.
-	Respect429 bool
-	// DryRun discovers URLs without stress testing.
-	DryRun bool
 	// InsecureSkipVerify skips TLS certificate validation.
 	InsecureSkipVerify bool
 	// IgnoreRobots bypasses robots.txt restrictions.
 	IgnoreRobots bool
+	// AllowPrivateIPs lets the crawl connect to private and reserved addresses.
+	AllowPrivateIPs bool
 	// Verbose enables detailed logging.
 	Verbose bool
 	// NoProgress disables the progress bar.
@@ -110,12 +113,8 @@ func DefaultConfig() Config {
 		Duration:           "2m",
 		Timeout:            "30s",
 		Rate:               2.0,
-		UserAgent:          "Lobster/1.0",
-		FollowLinks:        true,
 		MaxDepth:           3,
 		QueueSize:          10000, // ~80KB per 10K queue (assuming 8 bytes per URLTask)
-		Respect429:         true,  // Respect rate limiting by default
-		DryRun:             false, // Perform actual tests by default
 		OutputFile:         "",
 		Verbose:            false,
 		PerformanceTargets: DefaultPerformanceTargets(),
@@ -137,20 +136,29 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("queue-size must be > 0, got %d", c.QueueSize)
 	}
 
-	if c.Rate < 0 {
-		return fmt.Errorf("rate cannot be negative, got %.2f", c.Rate)
+	if err := c.validateRate(); err != nil {
+		return err
 	}
 
-	if c.Duration != "" {
-		if _, err := time.ParseDuration(c.Duration); err != nil {
-			return fmt.Errorf("invalid duration %q: %w", c.Duration, err)
+	if err := positiveDuration("duration", c.Duration); err != nil {
+		return err
+	}
+
+	if err := positiveDuration("timeout", c.Timeout); err != nil {
+		return err
+	}
+
+	if c.Load != "" {
+		if err := positiveDuration("load", c.Load); err != nil {
+			return err
+		}
+		if c.Rate > MaxLoadRate {
+			return fmt.Errorf("rate above %d req/s is refused with -load, got %g", MaxLoadRate, c.Rate)
 		}
 	}
 
-	if c.Timeout != "" {
-		if _, err := time.ParseDuration(c.Timeout); err != nil {
-			return fmt.Errorf("invalid timeout %q: %w", c.Timeout, err)
-		}
+	if err := c.PerformanceTargets.Validate(); err != nil {
+		return err
 	}
 
 	if c.BaseURL == "" {
@@ -164,6 +172,50 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+// validateRate refuses a rate that is not finite or is below MinRate; NaN
+// passes every comparison and would hang the load schedule.
+func (c *Config) validateRate() error {
+	if math.IsNaN(c.Rate) || math.IsInf(c.Rate, 0) {
+		return fmt.Errorf("rate must be a finite number, got %g", c.Rate)
+	}
+	if c.Rate < MinRate {
+		return fmt.Errorf("rate must be at least %.1f req/s, got %g", MinRate, c.Rate)
+	}
+	return nil
+}
+
+// positiveDuration refuses a duration string that does not parse or is not above zero.
+func positiveDuration(name, value string) error {
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		return fmt.Errorf("invalid %s %q: %w", name, value, err)
+	}
+	if d <= 0 {
+		return fmt.Errorf("%s must be > 0, got %q", name, value)
+	}
+	return nil
+}
+
+// Validate refuses negative targets; a target of 0 is disabled.
+func (p PerformanceTargets) Validate() error {
+	targets := []struct {
+		name  string
+		value float64
+	}{
+		{"requests_per_second", p.RequestsPerSecond},
+		{"avg_response_time_ms", p.AvgResponseTimeMs},
+		{"p95_response_time_ms", p.P95ResponseTimeMs},
+		{"p99_response_time_ms", p.P99ResponseTimeMs},
+		{"success_rate", p.SuccessRate},
+	}
+	for _, t := range targets {
+		if t.value < 0 {
+			return fmt.Errorf("performance target %s cannot be negative (0 disables it), got %g", t.name, t.value)
+		}
+	}
 	return nil
 }
 

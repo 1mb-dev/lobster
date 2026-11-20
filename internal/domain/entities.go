@@ -1,8 +1,12 @@
 package domain
 
-import "time"
+import (
+	"time"
 
-// URLTask represents a URL to be tested during stress testing.
+	"github.com/1mb-dev/lobster/v2/internal/stats"
+)
+
+// URLTask is a URL the crawl will request.
 // Depth tracks how many links deep this URL was discovered from the base URL,
 // used to enforce MaxDepth limits during recursive link discovery.
 type URLTask struct {
@@ -12,7 +16,7 @@ type URLTask struct {
 	Depth int
 }
 
-// TestResults contains comprehensive results from a stress test execution.
+// TestResults contains a run's results: the crawl's, and the load's when -load ran.
 // This is the main output structure containing all metrics, validations,
 // and performance data collected during the test run.
 type TestResults struct {
@@ -22,8 +26,8 @@ type TestResults struct {
 	Errors []ErrorInfo `json:"errors"`
 	// SlowRequests contains requests that exceeded the slow threshold (default 2s).
 	SlowRequests []SlowRequest `json:"slow_requests"`
-	// ResponseTimes contains individual response time measurements for analysis.
-	ResponseTimes []ResponseTimeEntry `json:"response_times"`
+	// ResponseTimes counts response times in fixed buckets; memory does not grow with requests.
+	ResponseTimes *stats.Histogram `json:"response_time_histogram"`
 	// PerformanceValidation contains pass/fail status for each performance target.
 	PerformanceValidation map[string]any `json:"performance_validation,omitempty"`
 	// Duration is the total test execution time as a human-readable string.
@@ -34,16 +38,32 @@ type TestResults struct {
 	MinResponseTime string `json:"min_response_time"`
 	// MaxResponseTime is the slowest response time recorded.
 	MaxResponseTime string `json:"max_response_time"`
+	// P95ResponseTime is the nearest-rank 95th percentile, to within one histogram bucket.
+	P95ResponseTime string `json:"p95_response_time"`
+	// P99ResponseTime is the nearest-rank 99th percentile, to within one histogram bucket.
+	P99ResponseTime string `json:"p99_response_time"`
 	// TotalRequests is the total number of HTTP requests made.
 	TotalRequests int64 `json:"total_requests"`
-	// SuccessfulRequests is the count of requests with 2xx/3xx status codes.
+	// SuccessfulRequests is the count of requests that got a 200-399 status.
 	SuccessfulRequests int64 `json:"successful_requests"`
-	// FailedRequests is the count of requests that failed or returned 4xx/5xx.
+	// FailedRequests is the count of requests with a transport error or a status outside 200-399.
 	FailedRequests int64 `json:"failed_requests"`
+	// AbandonedRequests counts requests the -duration deadline cut off; they are not in TotalRequests.
+	AbandonedRequests int64 `json:"abandoned_requests"`
+	// RobotsBlocked counts discovered URLs robots.txt disallowed; they are not requested.
+	RobotsBlocked int64 `json:"robots_blocked"`
+	// URLsDropped counts discovered URLs the full queue could not take.
+	URLsDropped int64 `json:"urls_dropped"`
+	// CrawlComplete is true when every discovered URL was requested (none pending, dropped or abandoned) and no page's body was cut off while its links were read. Links are read from a page's first 10MB, and from none of a page that declares a larger Content-Length; what is not read does not make the crawl incomplete.
+	CrawlComplete bool `json:"crawl_complete"`
+	// IncompleteReason says why the crawl is incomplete: IncompleteQueueFull, IncompleteDuration or IncompleteLinksCutOff.
+	IncompleteReason string `json:"incomplete_reason,omitempty"`
 	// RequestsPerSecond is the average throughput during the test.
 	RequestsPerSecond float64 `json:"requests_per_second"`
 	// SuccessRate is the percentage of successful requests (0-100).
 	SuccessRate float64 `json:"success_rate"`
+	// Load holds the -load phase's results; nil when no load phase ran.
+	Load *LoadResults `json:"load,omitempty"`
 	// URLsDiscovered is the count of unique URLs found during link discovery.
 	// Accessed atomically from multiple goroutines during crawl.
 	URLsDiscovered int64 `json:"urls_discovered"`
@@ -73,7 +93,7 @@ type URLValidation struct {
 	IsValid bool `json:"is_valid"`
 }
 
-// ErrorInfo represents an error encountered during stress testing.
+// ErrorInfo is an error the crawl recorded for a URL.
 // Errors are collected for reporting and debugging purposes.
 type ErrorInfo struct {
 	// Timestamp is when the error occurred.
@@ -95,17 +115,6 @@ type SlowRequest struct {
 	URL string `json:"url"`
 	// StatusCode is the HTTP status returned.
 	StatusCode int `json:"status_code"`
-}
-
-// ResponseTimeEntry represents a single response time measurement.
-// Used for calculating percentile statistics and time-series analysis.
-type ResponseTimeEntry struct {
-	// Timestamp is when the response was received.
-	Timestamp time.Time `json:"timestamp"`
-	// ResponseTime is the request duration.
-	ResponseTime time.Duration `json:"response_time"`
-	// URL is the endpoint that was requested.
-	URL string `json:"url"`
 }
 
 // PerformanceTarget represents the result of validating a performance criterion.
@@ -136,21 +145,19 @@ type PerformanceTargets struct {
 	P99ResponseTimeMs float64 `json:"p99_response_time_ms"`
 	// SuccessRate is the minimum acceptable success percentage (0-100).
 	SuccessRate float64 `json:"success_rate"`
-	// ErrorRate is the maximum acceptable error percentage (0-100).
-	ErrorRate float64 `json:"error_rate"`
 }
 
-// DefaultPerformanceTargets returns sensible default performance targets
+// DefaultPerformanceTargets enables only the success-rate target; a target of 0 is disabled.
 func DefaultPerformanceTargets() PerformanceTargets {
-	return PerformanceTargets{
-		RequestsPerSecond: 100,
-		AvgResponseTimeMs: 50,
-		P95ResponseTimeMs: 100,
-		P99ResponseTimeMs: 200,
-		SuccessRate:       99.0,
-		ErrorRate:         1.0,
-	}
+	return PerformanceTargets{SuccessRate: 99.0}
 }
+
+// IncompleteReason values.
+const (
+	IncompleteQueueFull   = "queue_full"
+	IncompleteDuration    = "duration"
+	IncompleteLinksCutOff = "links_cut_off"
+)
 
 // AddURLResult constants for URL addition outcomes.
 const (
@@ -170,4 +177,37 @@ type AddURLResult struct {
 	// Reason explains why the URL was or wasn't added.
 	// Values: "success", "duplicate", "queue_full", "depth_exceeded", "invalid_host", "parse_error"
 	Reason string
+}
+
+// LoadResults are the results of the -load phase: the crawled URLs replayed
+// open-loop at the target rate.
+type LoadResults struct {
+	// ResponseTimes counts latencies measured from each request's intended send time.
+	ResponseTimes *stats.Histogram `json:"response_time_histogram"`
+	// Duration is how long requests were scheduled for.
+	Duration string `json:"duration"`
+	// AbortReason says why the load stopped early; empty when it ran to the end.
+	AbortReason string `json:"abort_reason,omitempty"`
+	// Average, P95 and P99 summarize ResponseTimes.
+	AverageResponseTime string `json:"average_response_time"`
+	P95ResponseTime     string `json:"p95_response_time"`
+	P99ResponseTime     string `json:"p99_response_time"`
+	// TargetRate is the requested rate (-rate), in requests per second.
+	TargetRate float64 `json:"target_rate"`
+	// AchievedRate is requests sent divided by Duration.
+	AchievedRate float64 `json:"achieved_rate"`
+	// SuccessRate is the percentage of finished requests (successful plus failed) that got a 200-399 status.
+	SuccessRate float64 `json:"success_rate"`
+	// Sent counts requests sent.
+	Sent int64 `json:"requests_sent"`
+	// Successful counts requests that got a 200-399 status.
+	Successful int64 `json:"successful_requests"`
+	// Failed counts requests with a transport error or a status outside 200-399.
+	Failed int64 `json:"failed_requests"`
+	// Late counts requests that waited for an in-flight slot, and those after such a request due before its slot came free.
+	Late int64 `json:"late"`
+	// Unsent counts requests due in the window that were not sent: delayed by a wait for a slot, or finding no slot free, when it ended, or cut off by an abort.
+	Unsent int64 `json:"requests_unsent"`
+	// Aborted is true when consecutive 429, 5xx, connection errors or refusals stopped the load.
+	Aborted bool `json:"load_aborted"`
 }

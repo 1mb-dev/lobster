@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,27 +14,11 @@ import (
 )
 
 // Integration tests verify end-to-end workflows and multi-component interactions.
-// These tests are skipped in short mode as they require more runtime.
-// They are also skipped with race detector as they can timeout under the overhead.
-
-// skipSlowIntegrationTest skips the test in short mode.
-// Note: Race detector adds 2-10x overhead. These tests have tight timeouts
-// and can fail intermittently under race. Use `go test -short` for quick checks.
-func skipSlowIntegrationTest(t *testing.T) {
-	t.Helper()
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-	if raceEnabled {
-		t.Skip("Skipping integration test under race detector (2-10x overhead causes timeouts)")
-	}
-}
+// Runs end when the crawl completes; the context deadlines are ceilings only.
 
 // TestIntegration_FullCrawlWorkflow tests the complete crawl workflow:
 // seed URL → discover links → validate all URLs → generate final results
 func TestIntegration_FullCrawlWorkflow(t *testing.T) {
-	skipSlowIntegrationTest(t)
-
 	// Create a multi-page test site
 	var requestCount int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +60,6 @@ func TestIntegration_FullCrawlWorkflow(t *testing.T) {
 	// Configure for full crawl
 	config := testConfig(server.URL)
 	config.MaxDepth = 2 // Allow 2 levels of crawling
-	config.FollowLinks = true
 	config.NoProgress = true
 	logger := testLogger()
 
@@ -120,65 +104,12 @@ func TestIntegration_FullCrawlWorkflow(t *testing.T) {
 	}
 
 	// Verify response times are populated
-	if len(results.ResponseTimes) == 0 {
+	if results.ResponseTimes.Count() == 0 {
 		t.Error("Expected response times to be recorded")
 	}
 }
 
-// TestIntegration_DryRunMode verifies dry-run mode discovers links without load testing
-func TestIntegration_DryRunMode(t *testing.T) {
-	skipSlowIntegrationTest(t)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		if r.URL.Path == "" || r.URL.Path == "/" {
-			_, _ = w.Write([]byte(`<html><body>
-				<a href="/page1">Page 1</a>
-				<a href="/page2">Page 2</a>
-				<a href="/page3">Page 3</a>
-			</body></html>`))
-		} else {
-			_, _ = w.Write([]byte(`<html><body>Page content</body></html>`))
-		}
-	}))
-	defer server.Close()
-
-	config := testConfig(server.URL)
-	config.MaxDepth = 1
-	config.FollowLinks = true
-	config.DryRun = true
-	config.NoProgress = true
-	logger := testLogger()
-
-	tester, err := New(config, logger)
-	if err != nil {
-		t.Fatalf("Failed to create tester: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	results, err := tester.Run(ctx)
-	if err != nil {
-		t.Fatalf("Run failed: %v", err)
-	}
-
-	// Verify URLs were discovered even in dry-run mode
-	if results.URLsDiscovered < 3 {
-		t.Errorf("Expected to discover at least 3 URLs in dry-run, got %d", results.URLsDiscovered)
-	}
-
-	// In dry-run mode, requests are made for discovery but not for load testing
-	// So we should see some requests
-	if results.TotalRequests == 0 {
-		t.Error("Expected some requests in dry-run mode for link discovery")
-	}
-}
-
-// TestIntegration_AuthenticationWorkflow tests end-to-end authentication
 func TestIntegration_AuthenticationWorkflow(t *testing.T) {
-	skipSlowIntegrationTest(t)
-
 	// Create a server that requires authentication
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check for correct auth header
@@ -199,7 +130,6 @@ func TestIntegration_AuthenticationWorkflow(t *testing.T) {
 
 	config := testConfig(server.URL)
 	config.MaxDepth = 1
-	config.FollowLinks = true
 	config.NoProgress = true
 	config.Auth = &domain.AuthConfig{
 		Type:  "bearer",
@@ -233,8 +163,6 @@ func TestIntegration_AuthenticationWorkflow(t *testing.T) {
 
 // TestIntegration_RobotsTxtCompliance tests robots.txt enforcement
 func TestIntegration_RobotsTxtCompliance(t *testing.T) {
-	skipSlowIntegrationTest(t)
-
 	var allowedCount, blockedCount int64
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -263,7 +191,6 @@ func TestIntegration_RobotsTxtCompliance(t *testing.T) {
 
 	config := testConfig(server.URL)
 	config.MaxDepth = 1
-	config.FollowLinks = true
 	config.IgnoreRobots = false // Respect robots.txt
 	config.NoProgress = true
 	logger := testLogger()
@@ -298,8 +225,6 @@ func TestIntegration_RobotsTxtCompliance(t *testing.T) {
 
 // TestIntegration_ErrorHandlingAndRecovery tests error scenarios
 func TestIntegration_ErrorHandlingAndRecovery(t *testing.T) {
-	skipSlowIntegrationTest(t)
-
 	var requestNum int64
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -340,7 +265,6 @@ func TestIntegration_ErrorHandlingAndRecovery(t *testing.T) {
 
 	config := testConfig(server.URL)
 	config.MaxDepth = 1
-	config.FollowLinks = true
 	config.NoProgress = true
 	logger := testLogger()
 
@@ -399,8 +323,6 @@ func TestIntegration_ErrorHandlingAndRecovery(t *testing.T) {
 
 // TestIntegration_ConcurrentCrawling tests concurrent worker behavior
 func TestIntegration_ConcurrentCrawling(t *testing.T) {
-	skipSlowIntegrationTest(t)
-
 	var concurrentRequests int64
 	var maxConcurrent int64
 	var currentConcurrent int64
@@ -439,7 +361,6 @@ func TestIntegration_ConcurrentCrawling(t *testing.T) {
 
 	config := testConfig(server.URL)
 	config.MaxDepth = 1
-	config.FollowLinks = true
 	config.Concurrency = 3 // Use 3 workers
 	config.NoProgress = true
 	logger := testLogger()
@@ -472,5 +393,59 @@ func TestIntegration_ConcurrentCrawling(t *testing.T) {
 	// Verify crawl completed successfully
 	if results.TotalRequests < 5 {
 		t.Errorf("Expected at least 5 requests with concurrent crawling, got %d", results.TotalRequests)
+	}
+}
+
+// TestIntegration_DelayedLinks checks that a run waits for in-flight pages
+// whose links arrive after the queue has drained, and ends once the crawl does.
+func TestIntegration_DelayedLinks(t *testing.T) {
+	chain := map[string]string{"/": "/a", "/a": "/b", "/b": "/c", "/c": ""}
+	var mu sync.Mutex
+	hits := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits[r.URL.Path]++
+		mu.Unlock()
+		next, ok := chain[r.URL.Path]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		time.Sleep(20 * time.Millisecond) // the queue is empty while this page is in flight
+		w.Header().Set("Content-Type", "text/html")
+		if next != "" {
+			_, _ = w.Write([]byte(`<a href="` + next + `">next</a>`))
+		}
+	}))
+	defer server.Close()
+
+	config := testConfig(server.URL + "/")
+	config.Concurrency = 4
+	config.MaxDepth = 5
+	config.NoProgress = true
+
+	tester, err := New(config, testLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	const ceiling = 30 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), ceiling)
+	defer cancel()
+
+	start := time.Now()
+	if _, err = tester.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > ceiling/2 {
+		t.Errorf("Run took %v: it should end when the crawl completes, not at the deadline", elapsed)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for path := range chain {
+		if hits[path] != 1 {
+			t.Errorf("%s fetched %d times, want 1", path, hits[path])
+		}
 	}
 }

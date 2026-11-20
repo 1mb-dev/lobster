@@ -4,32 +4,14 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/1mb-dev/lobster/v2.svg)](https://pkg.go.dev/github.com/1mb-dev/lobster/v2)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Lobster** is an intelligent web stress testing tool that automatically discovers URLs by crawling your application and validates performance under load. Point it at your app, and it handles the rest.
-
-## Why Lobster?
-
-- **Zero Config**: Point and shoot
-- **Auto-Discovery**: Crawls and finds all URLs
-- **Pass/Fail Validation**: Not just metrics
-- **Security Hardened**: SSRF protection, secure credential handling
-- **CI/CD Ready**: Fast, reliable, scriptable
-
-## Features
-
-- **Auto URL Discovery**: Crawls and discovers all linked pages
-- **Concurrent Testing**: Configurable workers with rate limiting
-- **Performance Validation**: Pass/fail against targets (p95, p99, success rate)
-- **Rich Reports**: HTML (charts), JSON (API), console (real-time)
-- **Smart Rate Limiting**: Token bucket via [goflow](https://github.com/1mb-dev/goflow)
-- **robots.txt Compliance**: Respects website preferences by default
-- **SSRF Protection**: Blocks private IP ranges by default
+**Lobster** crawls a site you own from a base URL, fetches each page it finds, and checks response times and success rate against performance targets. With `-load`, it then replays the pages it found at a fixed rate. The run passes or fails, and the exit code says which.
 
 ## Quick Start
 
 ### Installation
 
 ```bash
-go install github.com/1mb-dev/lobster/cmd/lobster@latest
+go install github.com/1mb-dev/lobster/v2/cmd/lobster@latest
 ```
 
 Or clone and build:
@@ -37,24 +19,30 @@ Or clone and build:
 ```bash
 git clone https://github.com/1mb-dev/lobster.git
 cd lobster
-go build -o lobster cmd/lobster/main.go
+go build -o lobster ./cmd/lobster
 ```
 
 ### Basic Usage
 
-Test a public website:
-
-```bash
-lobster -url https://example.com -duration 30s
-```
-
-Test your local application:
+Check your local application:
 
 ```bash
 lobster -url http://localhost:3000 -allow-private-ips
 ```
 
-Lobster crawls your app, tests all discovered URLs under load, and generates reports.
+Check a public site you own:
+
+```bash
+lobster -url https://example.com
+```
+
+Lobster prints a summary when the run ends. Add `-output results.json` for JSON, `-html report.html` for an HTML report.
+
+Crawl, then replay the pages that responded 200-399 at 50 req/s for 30 seconds:
+
+```bash
+lobster -url http://localhost:3000 -allow-private-ips -rate 50 -load 30s
+```
 
 ### With Authentication
 
@@ -72,167 +60,75 @@ For more examples, see the [Quick Start Guide](https://1mb-dev.github.io/lobster
 
 ## Configuration
 
-Key flags: `-url`, `-concurrency`, `-duration`, `-rate`, `-max-depth`, `-output`
-
-Use `-config config.json` for complex setups. See `examples/config.example.json` for template.
-
-Full reference: [Configuration Guide](https://1mb-dev.github.io/lobster/configuration)
+`lobster -help` lists every flag; `-config` takes a JSON file (template: `examples/config.example.json`). Reference: [Configuration Guide](https://1mb-dev.github.io/lobster/configuration).
 
 ## How It Works
 
-### 1. URL Discovery Phase
-- Starts with the base URL
-- Parses HTML responses for `<a href>` links
-- Resolves relative URLs to absolute
-- Filters to same-domain links only
-- Maintains a queue of discovered URLs
-- Respects max depth configuration
-
-### 2. Concurrent Testing Phase
-- Spawns configurable number of worker goroutines
-- Distributes URLs across workers
-- Applies rate limiting via token bucket
-- Tracks response times and status codes
-- Continues until duration expires
-
-### 3. Analysis Phase
-- Calculates aggregate metrics
-- Computes percentiles (p95, p99)
-- Validates against performance targets
-- Identifies slow requests and errors
-
-### 4. Reporting Phase
-- Generates JSON output with detailed metrics
-- Creates HTML report with interactive charts
-- Provides console summary with pass/fail indicators
-- Outputs actionable recommendations
-
-## Architecture
-
-Lobster follows **Clean Architecture** principles:
-
-```
-lobster/
-├── cmd/lobster/       # CLI entry point
-├── internal/
-│   ├── cli/            # CLI utilities
-│   ├── config/         # Configuration loading
-│   ├── crawler/        # URL discovery
-│   ├── domain/         # Core entities
-│   ├── reporter/       # Report generation
-│   ├── robots/         # robots.txt parsing
-│   ├── tester/         # Load testing engine
-│   ├── util/           # Shared utilities
-│   └── validator/      # Performance validation
-├── docs/               # Documentation
-└── examples/           # Example configs
-```
-
-**Domain** -> **Crawler** -> **Tester** -> **Reporter** + **Validator**
-
-See [Architecture](https://1mb-dev.github.io/lobster/architecture) for technical details.
+1. **Crawl.** Starting at the base URL, Lobster follows same-host `<a href>` links up to `-max-depth` and fetches each page once, at most `-rate` requests per second. On an http base that is not redirected to https, a same-host `https://` link is crawled as the https site, so the pages it reaches are fetched over https as well. It skips pages robots.txt disallows and runs no JavaScript. The crawl ends when every page has been fetched; `-duration` is its time limit. A crawl cut short by `-duration` or a full queue, or with a page cut off before its links were read, is incomplete, and the run fails.
+2. **Load (optional).** With `-load 30s`, after a complete crawl, Lobster sends one request every `1/-rate` seconds to the crawled pages that responded 200-399, in turn. Requests go out on schedule however slowly the server responds, so a slow server shows in the latency rather than lowering the rate. A public host needs an ownership acknowledgement; see [Configuration](https://1mb-dev.github.io/lobster/configuration#load-phase).
+3. **Verdict.** Targets cover success rate, average, p95 and p99 response time, and requests per second under `-load`; each enabled target gets a PASS or FAIL line. Only the success-rate target (99%) is on by default. Exit code 0 means every target passed and the crawl completed; 1 means a target failed, the crawl was incomplete, or the load aborted or left requests unsent; 2 means a usage, configuration or safety refusal, or a runtime error. A CI step can gate on the exit code.
 
 ## Reports
 
-### Console Output
-Real-time progress updates and detailed summary:
+Console output from a crawl of a local 21-page site at `-rate 20`:
 
 ```
-=== STRESS TEST RESULTS ===
-Duration: 2m0s
-URLs Discovered: 42
-Total Requests: 2,450
-Successful Requests: 2,442
-Failed Requests: 8
-Average Response Time: 18.7ms
-Requests/Second: 20.4
-Success Rate: 99.67%
+============================================================
+RESULTS
+============================================================
+Duration:             1.001655626s
+URLs Discovered:      21
+Total Requests:       21
+Successful Requests:  21
+Failed Requests:      0
+Average Response Time: 863.559µs
+Min Response Time:    257.549µs
+Max Response Time:    5.663142ms
+p95 / p99:            1.448154ms / 5.663142ms
+Requests/Second:      20.97
+Success Rate:         100.00%
+Crawl Complete:       yes
 
+------------------------------------------------------------
+URL VALIDATION SUMMARY
+------------------------------------------------------------
+HTTP 200: 21 URL(s)
+============================================================
+
+
+============================================================
 PERFORMANCE TARGET VALIDATION
 ============================================================
-PASS Requests per Second:         20.4 req/s
-PASS Average Response Time:        18.7ms
-PASS 95th Percentile Response Time: 35.2ms
-PASS Success Rate:                 99.67%
+PASS Success Rate:                  100.00%
+    Target: ≥ 99.0%
 
-Overall: 4/4 targets met (100.0%)
-ALL PERFORMANCE TARGETS MET!
+
+Overall: PASS (1/1 targets met)
 ```
 
-### HTML Report
-Interactive report with:
-- Overview dashboard with key metrics
-- Response status distribution (pie charts)
-- URL validation table (sortable)
-- Response time histogram
-- Error analysis
-- Slow request identification
+- **JSON** (`-output results.json`): the same metrics, per-URL results, a response-time histogram, the load phase if one ran, and `performance_validation.overall_status` (`PASS` or `FAIL`).
+- **HTML** (`-html report.html`): summary cards, status counts, per-URL table, errors, slow requests and a response-time histogram for the crawl (no load phase or verdict), with no external scripts.
 
-### JSON Report
-Machine-readable format for integration:
-```json
-{
-  "duration": "2m0s",
-  "urls_discovered": 42,
-  "total_requests": 2450,
-  "successful_requests": 2442,
-  "failed_requests": 8,
-  "average_response_time": "18.7ms",
-  "requests_per_second": 20.4,
-  "success_rate": 99.67,
-  "performance_validation": {
-    "targets_met": 4,
-    "total_targets": 4,
-    "overall_status": "PRODUCTION_READY"
-  }
-}
-```
+## Responsible Use
 
-## Use Cases
+Only run Lobster against sites you own or have written permission to test. By default, Lobster:
 
-- Development testing and regression detection
-- Pre-deployment validation
-- CI/CD performance gates
-- Capacity planning
+- respects robots.txt and its `Crawl-delay`
+- keeps `-rate` as one limit for all workers
+- checks every connection's address: localhost and private addresses need `-allow-private-ips`, and redirects stay on the base URL's origin
+- refuses a `-load` against a public host without `-i-own-this` and `LOBSTER_I_OWN_THIS=<host>`
+- takes credentials from environment variables or stdin, never from flag values
+
+[Responsible Use](https://1mb-dev.github.io/lobster/responsible-use) covers load guidance and report handling.
 
 ## Documentation
 
 - [Quick Start](https://1mb-dev.github.io/lobster/quickstart)
 - [Configuration Reference](https://1mb-dev.github.io/lobster/configuration)
-- [Architecture](https://1mb-dev.github.io/lobster/architecture)
-- [Development Guide](https://1mb-dev.github.io/lobster/development)
-- [Changelog](https://1mb-dev.github.io/lobster/changelog)
-
-## Contributing
-
-Contributions are welcome. See [Contributing Guidelines](https://1mb-dev.github.io/lobster/contributing).
-
-### Development
-
-```bash
-git clone https://github.com/1mb-dev/lobster.git
-cd lobster
-make help      # See all targets
-make test      # Run tests
-make build     # Build binary
-```
-
-## Responsible Use
-
-**Only test systems you own or have written permission to test.**
-
-Unauthorized testing may violate computer fraud laws. Respect robots.txt (enabled by default), use rate limits, handle reports securely.
-
-See [Responsible Use](https://1mb-dev.github.io/lobster/responsible-use) for full guidelines.
+- [Development Guide](https://1mb-dev.github.io/lobster/development) and [Contributing](https://1mb-dev.github.io/lobster/contributing)
+- [Changelog](CHANGELOG.md)
+- [Issues](https://github.com/1mb-dev/lobster/issues)
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Support
-
-- [Documentation](https://1mb-dev.github.io/lobster/)
-- [Issues](https://github.com/1mb-dev/lobster/issues)
-- [Discussions](https://github.com/1mb-dev/lobster/discussions)
-
-Built with [goflow](https://github.com/1mb-dev/goflow)
+MIT, see [LICENSE](LICENSE).

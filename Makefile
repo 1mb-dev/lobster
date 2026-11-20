@@ -5,7 +5,7 @@ BINARY_NAME=lobster
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "v0.1.0-dev")
 BUILD_DIR=.
 CMD_DIR=./cmd/lobster
-INTERNAL_PACKAGES=./internal/...
+PACKAGES=./...
 
 # Go parameters
 GOCMD=go
@@ -35,25 +35,20 @@ build:
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
 
-## test: Run all tests (short mode for CI)
+## test: Run all tests under the race detector
 test:
 	@echo "Running tests..."
-	$(GOTEST) -race -short -timeout 60s $(INTERNAL_PACKAGES)
-
-## test-full: Run all tests including slow integration tests
-test-full:
-	@echo "Running full test suite (including integration tests)..."
-	$(GOTEST) -race -timeout 120s $(INTERNAL_PACKAGES)
+	$(GOTEST) -race -timeout 120s $(PACKAGES)
 
 ## test-verbose: Run tests with verbose output
 test-verbose:
 	@echo "Running tests (verbose)..."
-	$(GOTEST) -v -race -timeout 30s $(INTERNAL_PACKAGES)
+	$(GOTEST) -v -race -timeout 120s $(PACKAGES)
 
 ## test-coverage: Run tests with coverage report
 test-coverage:
 	@echo "Running tests with coverage..."
-	$(GOTEST) -race -coverprofile=coverage.out -covermode=atomic $(INTERNAL_PACKAGES)
+	$(GOTEST) -race -coverprofile=coverage.out -covermode=atomic $(PACKAGES)
 	@echo "Coverage report generated: coverage.out"
 	@$(GOCMD) tool cover -func=coverage.out | grep total | awk '{print "Total coverage: " $$3}'
 
@@ -101,7 +96,7 @@ install:
 	$(GOINSTALL) $(LDFLAGS) $(CMD_DIR)
 	@echo "Installed to $(GOPATH)/bin/$(BINARY_NAME)"
 
-## run: Build and run with example arguments
+## run: Build and print the help
 run: build
 	@echo "Running $(BINARY_NAME)..."
 	./$(BINARY_NAME) -help
@@ -129,6 +124,7 @@ pre-commit: fmt vet test
 # Default target
 .DEFAULT_GOAL := help
 
+## setup: Bootstrap repo: install git hooks
 .PHONY: setup
 setup: ## Bootstrap repo: install git hooks
 	@scripts/setup.sh

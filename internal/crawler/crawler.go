@@ -2,21 +2,24 @@
 package crawler
 
 import (
-	"html"
+	"errors"
+	"io"
 	"net/url"
-	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
 
+	"golang.org/x/net/html"
+
 	"github.com/1mb-dev/lobster/v2/internal/domain"
+	"github.com/1mb-dev/lobster/v2/internal/util"
 )
 
 // Crawler handles URL discovery and link extraction
 type Crawler struct {
 	discoveredURLs sync.Map
 	baseURL        *url.URL
-	urlPattern     *regexp.Regexp
+	scheme         atomic.Pointer[string] // the crawl's scheme: the base page's, after redirects
 	maxDepth       int
 	discoveredCnt  atomic.Int64 // O(1) counter for discovered URLs
 	droppedCnt     atomic.Int64 // Counter for URLs dropped due to queue full
@@ -29,46 +32,108 @@ func New(baseURL string, maxDepth int) (*Crawler, error) {
 		return nil, err
 	}
 
-	return &Crawler{
-		baseURL:    parsedURL,
-		urlPattern: regexp.MustCompile(`href=["']([^"']+)["']`),
-		maxDepth:   maxDepth,
-	}, nil
+	c := &Crawler{
+		baseURL:  parsedURL,
+		maxDepth: maxDepth,
+	}
+	scheme := strings.ToLower(parsedURL.Scheme)
+	c.scheme.Store(&scheme)
+	return c, nil
 }
 
-// ExtractLinks extracts all links from HTML body
-func (c *Crawler) ExtractLinks(body string) []string {
-	matches := c.urlPattern.FindAllStringSubmatch(body, -1)
-	links := make([]string, 0, len(matches))
+// SetBaseFinalURL records the URL the base page was served from, after
+// redirects. When it is https, http links on port 80 are fetched over https
+// and the two spellings of a page are one; otherwise each link keeps its
+// scheme. A URL off the base origin is ignored.
+func (c *Crawler) SetBaseFinalURL(final *url.URL) {
+	if util.SameOrigin(c.baseURL, final) {
+		scheme := strings.ToLower(final.Scheme)
+		c.scheme.Store(&scheme)
+	}
+}
 
-	for _, match := range matches {
-		if len(match) > 1 {
-			link := strings.TrimSpace(match[1])
-			if c.isValidLink(link) {
-				// Decode HTML entities (e.g., &amp; -> &, &quot; -> ")
-				decodedLink := html.UnescapeString(link)
-				links = append(links, decodedLink)
+// ExtractLinks returns the href of every <a> element in an HTML body, resolved
+// against the document's base URL: the first <base href>, itself resolved
+// against page, or page when there is none. page is the URL the body was
+// served from, after redirects. Only http and https links are returned. It
+// reads body to the end, holding one token at a time; if a read error cuts it
+// short, it returns the links read before it with the error.
+func (c *Crawler) ExtractLinks(body io.Reader, page *url.URL) ([]string, error) {
+	base, baseSet := page, false
+	var hrefs []string
+	z := html.NewTokenizer(body)
+	for {
+		tt := z.Next()
+		if tt == html.ErrorToken {
+			if err := z.Err(); !errors.Is(err, io.EOF) {
+				return c.resolve(hrefs, base), err
+			}
+			break
+		}
+		if tt != html.StartTagToken && tt != html.SelfClosingTagToken {
+			continue
+		}
+		name, _ := z.TagName()
+		switch string(name) {
+		case "noscript":
+			// lobster runs no scripts, so noscript content is markup
+			z.NextIsNotRawText()
+		case "a":
+			if href, ok := hrefOf(z); ok {
+				hrefs = append(hrefs, href)
+			}
+		case "base":
+			if href, ok := hrefOf(z); ok && !baseSet {
+				baseSet = true
+				if u, err := page.Parse(href); err == nil {
+					base = u
+				}
 			}
 		}
 	}
 
+	return c.resolve(hrefs, base), nil
+}
+
+// resolve returns the hrefs that lead to another page, as http or https URLs
+// resolved against base.
+func (c *Crawler) resolve(hrefs []string, base *url.URL) []string {
+	links := make([]string, 0, len(hrefs))
+	for _, href := range hrefs {
+		if !c.isValidLink(href) {
+			continue
+		}
+		if u, err := base.Parse(href); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+			links = append(links, u.String())
+		}
+	}
 	return links
 }
 
-// isValidLink checks if a link should be followed
+// hrefOf returns the current tag's first href attribute, entity-decoded, with
+// tabs and line breaks removed and spaces trimmed, as a browser reads it.
+func hrefOf(z *html.Tokenizer) (string, bool) {
+	for {
+		key, val, more := z.TagAttr()
+		if string(key) == "href" {
+			return strings.TrimSpace(stripTabsAndNewlines.Replace(string(val))), true
+		}
+		if !more {
+			return "", false
+		}
+	}
+}
+
+var stripTabsAndNewlines = strings.NewReplacer("\t", "", "\n", "", "\r", "")
+
+// isValidLink reports whether an href can lead to another page: not empty,
+// not fragment-only, and with no scheme or an http or https one.
 func (c *Crawler) isValidLink(link string) bool {
-	if link == "" {
+	if link == "" || strings.HasPrefix(link, "#") {
 		return false
 	}
-
-	// Skip javascript:, mailto:, and fragment-only links
-	if strings.HasPrefix(link, "javascript:") ||
-		strings.HasPrefix(link, "mailto:") ||
-		strings.HasPrefix(link, "#") {
-		return false
-	}
-
-	return true
+	u, err := url.Parse(link)
+	return err == nil && (u.Scheme == "" || u.Scheme == "http" || u.Scheme == "https")
 }
 
 // AddURL adds a URL to the discovery queue if it's valid and not already discovered
@@ -84,27 +149,53 @@ func (c *Crawler) AddURL(rawURL string, depth int, urlQueue chan<- domain.URLTas
 		parsedURL = c.baseURL.ResolveReference(parsedURL)
 	}
 
-	// Only process URLs from the same host
-	if parsedURL.Host != c.baseURL.Host {
+	// On an https crawl, an http link on port 80 is fetched over https. No
+	// link is ever downgraded: that would send the run's credentials in
+	// plaintext.
+	scheme := *c.scheme.Load()
+	if scheme == "https" && strings.EqualFold(parsedURL.Scheme, "http") && util.PortOf(parsedURL) == "80" {
+		parsedURL.Scheme = "https"
+		parsedURL.Host = strings.TrimSuffix(parsedURL.Host, ":80")
+	}
+	if !util.SameOrigin(c.baseURL, parsedURL) {
 		return domain.AddURLResult{Added: false, Reason: domain.AddURLInvalidHost}
 	}
+	// One host spelling per scheme. SameOrigin leaves a scheme change only for
+	// an http base on port 80 and an https link on 443.
+	if strings.EqualFold(parsedURL.Scheme, c.baseURL.Scheme) {
+		parsedURL.Host = c.baseURL.Host
+	} else {
+		parsedURL.Host = strings.TrimSuffix(c.baseURL.Host, ":80")
+	}
 
-	// Clean URL (remove fragment, normalize)
+	// Clean URL (remove fragment; an empty path is the root, so the base URL
+	// and a link to "/" are one URL)
 	parsedURL.Fragment = ""
+	if parsedURL.Path == "" {
+		parsedURL.Path = "/"
+	}
 	cleanURL := parsedURL.String()
 
-	// Check if already discovered
-	if _, exists := c.discoveredURLs.LoadOrStore(cleanURL, true); exists {
+	// Checked before recording the URL, so a page first seen too deep can
+	// still be queued if it is found again at an allowed depth.
+	if depth > c.maxDepth {
+		return domain.AddURLResult{Added: false, Reason: domain.AddURLDepthExceeded}
+	}
+
+	// Every queued URL is on the base origin or its https upgrade, so path
+	// and query name a page on the crawl's scheme. A link that keeps the other
+	// scheme (https on an http crawl) is its own page.
+	key := *parsedURL
+	key.User, key.Host = nil, ""
+	if parsedURL.Scheme == scheme {
+		key.Scheme = ""
+	}
+	if _, exists := c.discoveredURLs.LoadOrStore(key.String(), true); exists {
 		return domain.AddURLResult{Added: false, Reason: domain.AddURLDuplicate}
 	}
 
 	// Track discovered URL count (O(1) instead of iterating sync.Map)
 	c.discoveredCnt.Add(1)
-
-	// Check depth limit
-	if depth > c.maxDepth {
-		return domain.AddURLResult{Added: false, Reason: domain.AddURLDepthExceeded}
-	}
 
 	// Add to queue
 	select {

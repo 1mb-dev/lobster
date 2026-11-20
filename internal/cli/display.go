@@ -2,30 +2,30 @@ package cli
 
 import (
 	"fmt"
-	"os"
+	"io"
 	"strings"
 )
 
-// PrintWarningBox prints a formatted warning box to stderr.
+// PrintWarningBox prints a formatted warning box to w.
 // The box has a consistent width and styling for security/ethical warnings.
-func PrintWarningBox(title string, lines []string) {
+func PrintWarningBox(w io.Writer, title string, lines []string) {
 	const boxWidth = 68 // Inner content width
 
-	fmt.Fprintf(os.Stderr, "\n")
-	fmt.Fprintf(os.Stderr, "╔%s╗\n", strings.Repeat("═", boxWidth+2))
-	fmt.Fprintf(os.Stderr, "║ %-*s ║\n", boxWidth, CenterText(title, boxWidth))
-	fmt.Fprintf(os.Stderr, "╠%s╣\n", strings.Repeat("═", boxWidth+2))
+	fmt.Fprintf(w, "\n")
+	fmt.Fprintf(w, "╔%s╗\n", strings.Repeat("═", boxWidth+2))
+	fmt.Fprintf(w, "║ %-*s ║\n", boxWidth, CenterText(title, boxWidth))
+	fmt.Fprintf(w, "╠%s╣\n", strings.Repeat("═", boxWidth+2))
 
 	for _, line := range lines {
 		if line == "" {
-			fmt.Fprintf(os.Stderr, "║ %-*s ║\n", boxWidth, "")
+			fmt.Fprintf(w, "║ %-*s ║\n", boxWidth, "")
 		} else {
-			fmt.Fprintf(os.Stderr, "║  %-*s║\n", boxWidth-1, line)
+			fmt.Fprintf(w, "║  %-*s║\n", boxWidth-1, line)
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "╚%s╝\n", strings.Repeat("═", boxWidth+2))
-	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(w, "╚%s╝\n", strings.Repeat("═", boxWidth+2))
+	fmt.Fprintf(w, "\n")
 }
 
 // CenterText centers text within a given width.
@@ -37,10 +37,9 @@ func CenterText(text string, width int) string {
 	return strings.Repeat(" ", padding) + text + strings.Repeat(" ", width-len(text)-padding)
 }
 
-// ShowHelpMessage prints the help message to stdout.
-// The version parameter should be passed from the main package's version variable.
-func ShowHelpMessage(version string) {
-	fmt.Println(`Lobster - Intelligent Web Stress Testing Tool
+// ShowHelpMessage prints the help message to w; version is shown as given.
+func ShowHelpMessage(w io.Writer, version string) {
+	fmt.Fprintln(w, `Lobster - crawl a site you own and check its response times and success rate against performance targets
 
 USAGE:
     lobster [OPTIONS]
@@ -49,52 +48,53 @@ OPTIONS:
     -config string
         Path to configuration file (JSON format)
     -url string
-        Base URL to test (default: http://localhost:3000)
+        Base URL to crawl (default: http://localhost:3000)
     -concurrency int
         Number of concurrent workers (default: 5)
     -duration string
-        Test duration (e.g., 30s, 5m, 1h) (default: 2m)
+        Time limit for the crawl (default: 2m); the run ends sooner when
+        every page has been fetched
+    -load string
+        After a complete crawl, replay the crawled pages that responded
+        200-399 at -rate for this long (e.g. 30s): requests go out on
+        schedule whatever the response times, up to 256 in flight; a
+        request not sent by the end of the window is unsent and fails
+        the run, unless no wait for a slot delayed it and a slot is
+        free; stops early after 10 consecutive 429, 5xx, connection
+        errors or refusals.
+        A public host, or a robots.txt Crawl-delay, needs -i-own-this and
+        LOBSTER_I_OWN_THIS=<host>. -rate is capped at 1000 with -load.
+    -i-own-this
+        Confirm you own the -load target (with LOBSTER_I_OWN_THIS=<host>)
     -timeout string
         Request timeout (default: 30s)
     -rate float
-        Requests per second limit (default: 2.0)
-        Safety: Minimum 0.1 req/s enforced
-        Warning prompt for rates < 1.0 req/s
+        Requests per second, shared by all workers (default: 2.0)
+        Minimum 0.1; below 1.0 asks for confirmation on a terminal
+        robots.txt Crawl-delay lowers the crawl's rate to 1/delay
     -user-agent string
-        User agent string (default: Lobster/1.0)
-    -follow-links
-        Follow links found in pages (default: true)
+        User agent string (default: lobster/<version>)
     -max-depth int
-        Maximum crawl depth (default: 3)
+        Maximum crawl depth; 0 fetches the base page only (default: 3)
     -queue-size int
         URL queue buffer size (default: 10000)
-        Memory usage: ~8 bytes per queue slot
-    -respect-429
-        Respect HTTP 429 with exponential backoff (default: true)
-        Backoff: 1s, 2s, 4s, 8s, 16s (max 30s)
-    -dry-run
-        Discover URLs without making test requests
-        Shows estimated test scope and discovered URLs
     -insecure-skip-verify
         INSECURE: Skip TLS certificate verification
-        Use ONLY for testing with self-signed certificates
-        Makes you vulnerable to man-in-the-middle attacks!
+        Requires LOBSTER_INSECURE_TLS=true
     -allow-private-ips
-        Allow testing against private/localhost IPs
-        Bypasses SSRF protection for internal testing
+        Allow a localhost or private-IP base URL
         Only use for services you own or have permission to test
     -ignore-robots
-        Ignore robots.txt directives (use responsibly)
+        Ignore robots.txt directives
         Only use if you OWN the website or have explicit permission
-        Bypassing robots.txt may violate terms of service
     -output string
-        Output file for results (JSON format)
+        JSON results file
+    -html string
+        HTML report file: summary, status counts, response-time histogram
     -verbose
         Enable verbose logging with structured output
     -no-progress
         Disable real-time progress updates
-    -compare string
-        Compare performance against target (e.g., Ghost, WordPress)
 
 AUTHENTICATION OPTIONS:
     -auth-type string
@@ -102,16 +102,20 @@ AUTHENTICATION OPTIONS:
     -auth-username string
         Username for basic authentication
     -auth-password-stdin
-        Read password from stdin (more secure than CLI flags)
+        Read password from stdin (one line)
     -auth-token-stdin
-        Read bearer token from stdin (more secure than CLI flags)
+        Read bearer token from stdin (one line)
     -auth-header string
-        Custom header in Name:Value format
+        Custom header name; its value comes from LOBSTER_AUTH_HEADER
+        or -auth-header-stdin
+    -auth-header-stdin
+        Read the -auth-header value from stdin (one line)
 
-    Credentials via environment variables (RECOMMENDED):
+    Credentials via environment variables:
         LOBSTER_AUTH_PASSWORD   Password for basic authentication
         LOBSTER_AUTH_TOKEN      Bearer token for authentication
         LOBSTER_AUTH_COOKIE     Cookie string in name=value format
+        LOBSTER_AUTH_HEADER     Value for the -auth-header header
 
     -version
         Show version information
@@ -119,79 +123,65 @@ AUTHENTICATION OPTIONS:
         Show this help message
 
 EXAMPLES:
-    # Basic stress test
-    lobster -url http://localhost:3000
+    # Crawl a local site
+    lobster -url http://localhost:3000 -allow-private-ips
 
-    # High concurrency test with custom duration
-    lobster -url http://localhost:3000 -concurrency 50 -duration 5m
+    # Check only the base page
+    lobster -url http://localhost:3000 -allow-private-ips -max-depth 0
 
-    # Test with rate limiting and output
-    lobster -url http://localhost:3000 -rate 10 -output results.json
+    # Faster crawl, with JSON and HTML reports
+    lobster -url http://localhost:3000 -allow-private-ips -rate 10 \
+        -output results.json -html report.html
+
+    # Crawl, then replay the crawled pages at 50 req/s for 30s
+    LOBSTER_I_OWN_THIS=localhost lobster -url http://localhost:3000 -allow-private-ips \
+        -rate 50 -load 30s -i-own-this
 
     # Use configuration file
     lobster -config myconfig.json
 
-    # Compare against competitor
-    lobster -url http://localhost:3000 -compare "Ghost"
-
-    # Quick validation test
-    lobster -url http://localhost:3000 -duration 30s -concurrency 5
-
-    # Test with basic authentication (using environment variable)
-    LOBSTER_AUTH_PASSWORD=secret lobster -url http://localhost:3000 \
+    # Basic authentication (password from an environment variable)
+    LOBSTER_AUTH_PASSWORD=secret lobster -url http://localhost:3000 -allow-private-ips \
         -auth-type basic -auth-username admin
 
-    # Test with basic authentication (using stdin)
-    echo "secret" | lobster -url http://localhost:3000 \
+    # Basic authentication (password from stdin)
+    echo "secret" | lobster -url http://localhost:3000 -allow-private-ips \
         -auth-type basic -auth-username admin -auth-password-stdin
 
-    # Test with bearer token (using environment variable)
-    LOBSTER_AUTH_TOKEN=eyJhbGc... lobster -url http://api.example.com \
-        -auth-type bearer
+    # Bearer token (from an environment variable)
+    LOBSTER_AUTH_TOKEN=eyJhbGc... lobster -url https://example.com -auth-type bearer
 
-    # Test with cookie authentication (using environment variable)
-    LOBSTER_AUTH_COOKIE="session=abc123" lobster -url http://localhost:3000 \
-        -auth-type cookie
-
-    # Test with custom header (e.g., API key)
-    lobster -url http://api.example.com -auth-type header \
-        -auth-header "X-API-Key:your-key-here"
+    # Custom header, e.g. an API key (value from an environment variable)
+    LOBSTER_AUTH_HEADER=your-key lobster -url https://example.com \
+        -auth-type header -auth-header X-API-Key
 
 CONFIGURATION FILE EXAMPLE:
     {
       "base_url": "http://localhost:3000",
       "concurrency": 10,
       "duration": "5m",
-      "timeout": "30s",
       "rate": 10.0,
-      "user_agent": "Lobster/1.0",
-      "follow_links": true,
       "max_depth": 3,
-      "queue_size": 10000,
       "output_file": "results.json",
-      "verbose": false,
       "auth": {
         "type": "basic",
         "username": "admin",
         "password": "${LOBSTER_AUTH_PASSWORD}"
       },
       "performance_targets": {
-        "requests_per_second": 100,
-        "avg_response_time_ms": 50,
         "p95_response_time_ms": 100,
-        "p99_response_time_ms": 200,
-        "success_rate": 99.0,
-        "error_rate": 1.0
+        "success_rate": 99.0
       }
     }
 
-    NOTE: Use ${VAR_NAME} syntax for environment variable substitution.
-    Never store plaintext credentials in config files.
+    A target set to 0, or left out, is not judged; success_rate defaults to 99.
+    Unknown keys are refused. Use ${VAR_NAME} for environment variable substitution;
+    never store plaintext credentials in config files.
 
 DOCUMENTATION:
-    Full documentation: https://github.com/1mb-dev/lobster
+    Full documentation: https://1mb-dev.github.io/lobster/
     Report issues: https://github.com/1mb-dev/lobster/issues
 
 VERSION:
-    Lobster v` + version)
+    Lobster `+version)
 }

@@ -1,25 +1,28 @@
-// Package tester implements the core load testing engine with concurrent workers.
+// Package tester crawls a site with concurrent workers and records each page's response.
 package tester
 
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/1mb-dev/goflow/pkg/ratelimit/bucket"
 	"github.com/1mb-dev/lobster/v2/internal/crawler"
 	"github.com/1mb-dev/lobster/v2/internal/domain"
 	"github.com/1mb-dev/lobster/v2/internal/robots"
+	"github.com/1mb-dev/lobster/v2/internal/stats"
 	"github.com/1mb-dev/lobster/v2/internal/util"
 )
 
@@ -27,15 +30,11 @@ const (
 	// defaultSlowRequestThreshold is the response time above which requests are flagged as slow.
 	defaultSlowRequestThreshold = 2 * time.Second
 
-	// linkExtractionLimit is the maximum bytes to read for link discovery.
-	// 64KB is sufficient for most pages as links are typically in the head/upper body.
-	linkExtractionLimit = 64 * 1024
-
 	// defaultQueueSize is the default URL queue capacity when not configured.
 	defaultQueueSize = 10000
 )
 
-// Tester orchestrates the stress testing process
+// Tester crawls a site from its base URL and records each page's response.
 type Tester struct {
 	config       domain.TesterConfig
 	client       *http.Client
@@ -49,11 +48,22 @@ type Tester struct {
 	// Result channels for lock-free aggregation
 	validationsCh   chan domain.URLValidation
 	errorsCh        chan domain.ErrorInfo
-	responseTimesCh chan domain.ResponseTimeEntry
+	responseTimesCh chan time.Duration
 	slowRequestsCh  chan domain.SlowRequest
+
+	crawlDelay time.Duration
+
+	// baseRefused is set by the base URL's task when the dial check or the
+	// redirect policy refuses it; read after the workers stop.
+	baseRefused error
+
+	pending     atomic.Int64 // tasks enqueued and not yet finished
+	linksCutOff atomic.Int64 // pages whose body was cut off before all their links were read
+	done        chan struct{}
+	doneOnce    sync.Once
 }
 
-// New creates a new stress tester
+// New creates a Tester for config.
 func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 	// Create crawler
 	crawlerInstance, err := crawler.New(config.BaseURL, config.MaxDepth)
@@ -61,21 +71,8 @@ func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 		return nil, fmt.Errorf("creating crawler: %w", err)
 	}
 
-	// Create token bucket rate limiter using goflow
-	var rateLimiter bucket.Limiter
-	if config.Rate > 0 {
-		// Create token bucket with burst capacity of 2x the rate per second
-		burst := int(config.Rate * 2)
-		if burst < 1 {
-			burst = 1
-		}
-
-		rateLimiter, err = bucket.NewSafe(bucket.Limit(config.Rate), burst)
-		if err != nil {
-			// Rate limiting was explicitly requested - fail rather than silently proceed
-			// without it, which could cause unintended DoS against the target
-			return nil, fmt.Errorf("creating rate limiter (rate=%.2f): %w", config.Rate, err)
-		}
+	if config.Rate <= 0 {
+		return nil, fmt.Errorf("rate must be > 0, got %g", config.Rate)
 	}
 
 	// Use configured queue size, default to defaultQueueSize if not set
@@ -84,39 +81,36 @@ func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 		queueSize = defaultQueueSize
 	}
 
-	// Create HTTP Transport with connection pooling for high concurrency
-	// Default net/http Transport has MaxIdleConnsPerHost=2 which bottlenecks parallel requests
-	transport := &http.Transport{
-		MaxIdleConns:        100,                    // Total pool size across all hosts
-		MaxIdleConnsPerHost: config.Concurrency * 2, // Allow 2x concurrency to handle bursts
-		MaxConnsPerHost:     config.Concurrency * 2, // Limit connections per host
-		IdleConnTimeout:     90 * time.Second,       // Keep idle connections alive
-		DisableCompression:  false,                  // Enable gzip for bandwidth savings
-		ForceAttemptHTTP2:   true,                   // Enable HTTP/2 when available (HTTPS)
-	}
-
-	// Configure TLS if InsecureSkipVerify is enabled
 	if config.InsecureSkipVerify {
 		logger.Warn("INSECURE: TLS certificate verification is disabled. Use only for testing with self-signed certificates!")
-		transport.TLSClientConfig = &tls.Config{
-			InsecureSkipVerify: true, //nolint:gosec // Intentionally insecure for testing self-signed certs
-		}
 	}
+	transport := newTransport(config, config.Concurrency*2, util.DialControl(config.AllowPrivateIPs))
+
+	baseURL, err := url.Parse(config.BaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parsing base URL: %w", err)
+	}
+	robotsParser := robots.New(config.UserAgent)
 
 	// Create HTTP client with connection pooling
 	httpClient := &http.Client{
-		Timeout:   config.RequestTimeout,
-		Transport: transport,
+		Timeout:       config.RequestTimeout,
+		Transport:     transport,
+		CheckRedirect: redirectPolicy(baseURL, robotsParser, config.IgnoreRobots),
 	}
 
-	// Create robots.txt parser and fetch robots.txt
-	robotsParser := robots.New(config.UserAgent)
+	// robots.txt is fetched through the same transport, without the robots recheck.
+	robotsParser.SetClient(&http.Client{
+		Timeout:       10 * time.Second,
+		Transport:     transport,
+		CheckRedirect: redirectPolicy(baseURL, robotsParser, true),
+	})
 	if !config.IgnoreRobots {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		if err := robotsParser.FetchAndParse(ctx, config.BaseURL); err != nil {
-			logger.Warn("Failed to fetch robots.txt, proceeding with caution", "error", err)
+		if fetchErr := robotsParser.FetchAndParse(ctx, config.BaseURL); fetchErr != nil {
+			logger.Warn("Failed to fetch robots.txt, proceeding with caution", "error", fetchErr)
 		} else if robotsParser.RobotsTxtFound() {
 			logger.Info("robots.txt found and parsed successfully")
 		} else {
@@ -126,6 +120,17 @@ func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 		logger.Warn("WARNING: Ignoring robots.txt directives. Please ensure you have permission to test this site!")
 	}
 
+	rate := effectiveRate(config.Rate, robotsParser.GetCrawlDelay())
+	if rate < config.Rate {
+		logger.Info("robots.txt Crawl-delay lowers the rate",
+			"crawl_delay", robotsParser.GetCrawlDelay(), "rate", rate)
+	}
+	// Burst 1: requests are spaced at 1/rate from the first one.
+	rateLimiter, err := bucket.NewSafe(bucket.Limit(rate), 1)
+	if err != nil {
+		return nil, fmt.Errorf("creating rate limiter (rate=%.2f): %w", rate, err)
+	}
+
 	// Size result channels proportionally to avoid backpressure
 	// Use larger buffers when queue is large to handle burst processing
 	resultBufferSize := min(queueSize, 10000)
@@ -133,6 +138,7 @@ func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 
 	return &Tester{
 		config:          config,
+		crawlDelay:      robotsParser.GetCrawlDelay(),
 		client:          httpClient,
 		urlQueue:        make(chan domain.URLTask, queueSize),
 		results:         &domain.TestResults{URLValidations: make([]domain.URLValidation, 0)},
@@ -142,17 +148,18 @@ func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 		logger:          logger,
 		validationsCh:   make(chan domain.URLValidation, resultBufferSize),
 		errorsCh:        make(chan domain.ErrorInfo, resultBufferSize),
-		responseTimesCh: make(chan domain.ResponseTimeEntry, resultBufferSize),
+		responseTimesCh: make(chan time.Duration, resultBufferSize),
 		slowRequestsCh:  make(chan domain.SlowRequest, slowBufferSize),
+		done:            make(chan struct{}),
 	}, nil
 }
 
-// Run executes the stress test
+// Run crawls the site until every discovered page is fetched or ctx ends.
 func (t *Tester) Run(ctx context.Context) (*domain.TestResults, error) {
 	startTime := time.Now()
 
 	// Initialize results
-	t.results.ResponseTimes = make([]domain.ResponseTimeEntry, 0)
+	t.results.ResponseTimes = stats.NewHistogram()
 	t.results.Errors = make([]domain.ErrorInfo, 0)
 	t.results.SlowRequests = make([]domain.SlowRequest, 0)
 
@@ -163,6 +170,9 @@ func (t *Tester) Run(ctx context.Context) (*domain.TestResults, error) {
 	aggregatorWg.Add(1)
 	go t.aggregator(&aggregatorWg)
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	// Start workers
 	for i := 0; i < t.config.Concurrency; i++ {
 		wg.Add(1)
@@ -170,17 +180,17 @@ func (t *Tester) Run(ctx context.Context) (*domain.TestResults, error) {
 	}
 
 	// Start URL discovery with the base URL
-	t.crawler.AddURL(t.config.BaseURL, 0, t.urlQueue)
+	t.enqueue(t.config.BaseURL, 0)
 	atomic.StoreInt64(&t.results.URLsDiscovered, int64(t.crawler.GetDiscoveredCount()))
 
 	// Start monitoring
 	go t.monitor(ctx, startTime)
 
-	// Wait for context cancellation or completion
-	<-ctx.Done()
-
-	// Close URL queue and wait for workers to finish
-	close(t.urlQueue)
+	select {
+	case <-ctx.Done():
+	case <-t.done:
+	}
+	cancel()
 	wg.Wait()
 
 	// Close result channels and wait for aggregator to finish
@@ -190,12 +200,10 @@ func (t *Tester) Run(ctx context.Context) (*domain.TestResults, error) {
 	close(t.slowRequestsCh)
 	aggregatorWg.Wait()
 
-	// Check for dropped URLs and warn user
-	if droppedCount := t.crawler.GetDroppedCount(); droppedCount > 0 {
-		t.logger.Warn("URLs dropped due to queue overflow",
-			"dropped_count", droppedCount,
-			"hint", "Consider increasing --queue-size")
+	if t.baseRefused != nil {
+		return nil, fmt.Errorf("base URL refused: %w", t.baseRefused)
 	}
+	t.recordCompleteness()
 
 	// Calculate final results
 	t.calculateResults(time.Since(startTime))
@@ -236,7 +244,7 @@ func (t *Tester) aggregator(wg *sync.WaitGroup) {
 				responseTimesCh = nil
 				continue
 			}
-			t.results.ResponseTimes = append(t.results.ResponseTimes, responseTime)
+			t.results.ResponseTimes.Record(responseTime)
 
 		case slowReq, ok := <-slowRequestsCh:
 			if !ok {
@@ -254,78 +262,13 @@ func (t *Tester) worker(ctx context.Context, wg *sync.WaitGroup) {
 
 	for {
 		select {
-		case task, ok := <-t.urlQueue:
-			if !ok {
-				return
-			}
+		case task := <-t.urlQueue:
 			t.processURL(ctx, task)
+			t.finish()
 		case <-ctx.Done():
 			return
 		}
 	}
-}
-
-// processDryRun handles URL discovery in dry-run mode (makes requests but doesn't record performance metrics)
-func (t *Tester) processDryRun(ctx context.Context, task domain.URLTask) {
-	atomic.AddInt64(&t.results.TotalRequests, 1)
-
-	// Make HTTP request to discover links (but skip rate limiting)
-	req, err := http.NewRequestWithContext(ctx, "GET", task.URL, http.NoBody)
-	if err != nil {
-		t.logger.Debug("Error creating request in dry-run",
-			"url", util.SanitizeURLDefault(task.URL),
-			"error", err)
-		atomic.AddInt64(&t.results.FailedRequests, 1)
-		t.recordError(task.URL, fmt.Sprintf("creating request: %v", err), task.Depth)
-		return
-	}
-
-	// Set headers
-	req.Header.Set("User-Agent", t.config.UserAgent)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-
-	// Apply authentication
-	if err := t.applyAuthentication(req); err != nil {
-		t.logger.Debug("Error applying authentication in dry-run",
-			"url", util.SanitizeURLDefault(task.URL),
-			"error", err)
-		atomic.AddInt64(&t.results.FailedRequests, 1)
-		t.recordError(task.URL, fmt.Sprintf("applying auth: %v", err), task.Depth)
-		return
-	}
-
-	// Execute request
-	resp, err := t.client.Do(req)
-	if err != nil {
-		t.logger.Debug("Error making request in dry-run",
-			"url", util.SanitizeURLDefault(task.URL),
-			"error", err)
-		atomic.AddInt64(&t.results.FailedRequests, 1)
-		t.recordError(task.URL, fmt.Sprintf("request failed: %v", err), task.Depth)
-		return
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	// Record basic validation (without performance metrics)
-	validation := domain.URLValidation{
-		URL:        task.URL,
-		StatusCode: resp.StatusCode,
-		Depth:      task.Depth,
-		IsValid:    resp.StatusCode >= 200 && resp.StatusCode < 400,
-	}
-
-	// Discover links from response
-	validation.LinksFound = t.discoverLinksFromResponse(resp, task)
-
-	t.addValidation(validation)
-
-	t.logger.Info("URL discovered (dry-run)",
-		"url", util.SanitizeURLDefault(task.URL),
-		"depth", task.Depth,
-		"status", resp.StatusCode,
-		"links_found", validation.LinksFound)
 }
 
 // processURL performs a single URL request and records results
@@ -333,44 +276,51 @@ func (t *Tester) processURL(ctx context.Context, task domain.URLTask) {
 	// Check robots.txt compliance (unless ignoring)
 	if !t.config.IgnoreRobots && !t.robotsParser.IsAllowed(task.URL) {
 		t.logger.Debug("URL blocked by robots.txt", "url", util.SanitizeURLDefault(task.URL))
-		// Record as skipped, not as an error
-		atomic.AddInt64(&t.results.TotalRequests, 1)
+		atomic.AddInt64(&t.results.RobotsBlocked, 1)
 		return
 	}
 
-	// In dry-run mode, make requests for link discovery but skip performance metrics
-	if t.config.DryRun {
-		t.processDryRun(ctx, task)
+	// A wait or request the deadline cuts off touches no request counter.
+	if err := t.rateLimiter.Wait(ctx); err != nil {
+		atomic.AddInt64(&t.results.AbandonedRequests, 1)
 		return
 	}
-
-	// Apply rate limiting using goflow's token bucket
-	if t.rateLimiter != nil {
-		if err := t.rateLimiter.Wait(ctx); err != nil {
-			// Context was canceled or deadline exceeded
-			t.recordError(task.URL, fmt.Sprintf("rate limiter wait canceled: %v", err), task.Depth)
-			atomic.AddInt64(&t.results.FailedRequests, 1)
-			return
-		}
-	}
-
-	atomic.AddInt64(&t.results.TotalRequests, 1)
 
 	// Make HTTP request with 429 retry logic
 	resp, responseTime, err := t.makeHTTPRequestWithRetry(ctx, task.URL)
 	if err != nil {
-		t.recordError(task.URL, fmt.Sprintf("making request: %v", err), task.Depth)
+		if ctx.Err() != nil {
+			atomic.AddInt64(&t.results.AbandonedRequests, 1)
+			return
+		}
+		if refused := refusal(err); refused != nil {
+			if task.Depth == 0 {
+				// A refused base URL ends the run with an error, not a failed page.
+				t.baseRefused = refused
+				return
+			}
+			err = refused
+		}
+		atomic.AddInt64(&t.results.TotalRequests, 1)
 		atomic.AddInt64(&t.results.FailedRequests, 1)
+		t.recordError(task.URL, fmt.Sprintf("making request: %v", err), task.Depth)
 		return
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
 
-	atomic.AddInt64(&t.results.SuccessfulRequests, 1)
+	atomic.AddInt64(&t.results.TotalRequests, 1)
+	ok := resp.StatusCode >= 200 && resp.StatusCode < 400
+	if ok {
+		atomic.AddInt64(&t.results.SuccessfulRequests, 1)
+	} else {
+		atomic.AddInt64(&t.results.FailedRequests, 1)
+		t.recordError(task.URL, fmt.Sprintf("HTTP %d", resp.StatusCode), task.Depth)
+	}
 
 	// Record response time
-	t.recordResponseTime(task.URL, responseTime)
+	t.responseTimesCh <- responseTime
 
 	// Create validation record
 	validation := domain.URLValidation{
@@ -380,7 +330,7 @@ func (t *Tester) processURL(ctx context.Context, task domain.URLTask) {
 		ContentLength: resp.ContentLength,
 		ContentType:   resp.Header.Get("Content-Type"),
 		Depth:         task.Depth,
-		IsValid:       resp.StatusCode >= 200 && resp.StatusCode < 400,
+		IsValid:       ok,
 	}
 
 	// Discover links if configured
@@ -404,7 +354,7 @@ func (t *Tester) processURL(ctx context.Context, task domain.URLTask) {
 
 // makeHTTPRequestWithRetry wraps makeHTTPRequest with exponential backoff retry for 429 responses.
 // Returns the actual request duration (excluding backoff time) for accurate latency metrics.
-func (t *Tester) makeHTTPRequestWithRetry(ctx context.Context, url string) (*http.Response, time.Duration, error) {
+func (t *Tester) makeHTTPRequestWithRetry(ctx context.Context, rawURL string) (*http.Response, time.Duration, error) {
 	const (
 		maxRetries     = 4 // Max retry attempts for 429
 		initialBackoff = 1 * time.Second
@@ -417,7 +367,7 @@ func (t *Tester) makeHTTPRequestWithRetry(ctx context.Context, url string) (*htt
 	backoff := initialBackoff
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		resp, duration, err := t.makeHTTPRequest(ctx, url)
+		resp, duration, err := t.makeHTTPRequest(ctx, rawURL)
 		lastRequestDuration = duration
 
 		// If request failed (network error, etc), return error immediately
@@ -425,8 +375,7 @@ func (t *Tester) makeHTTPRequestWithRetry(ctx context.Context, url string) (*htt
 			return nil, lastRequestDuration, err
 		}
 
-		// If not 429 or Respect429 is disabled, return response
-		if resp.StatusCode != http.StatusTooManyRequests || !t.config.Respect429 {
+		if resp.StatusCode != http.StatusTooManyRequests {
 			return resp, lastRequestDuration, nil
 		}
 
@@ -436,12 +385,12 @@ func (t *Tester) makeHTTPRequestWithRetry(ctx context.Context, url string) (*htt
 		// If this was the last attempt, return the 429 response
 		if attempt == maxRetries {
 			// Re-make request one final time to return a valid response object
-			return t.makeHTTPRequest(ctx, url)
+			return t.makeHTTPRequest(ctx, rawURL)
 		}
 
 		// Log the backoff
 		t.logger.Info("Received 429 Too Many Requests, backing off",
-			"url", util.SanitizeURLDefault(url),
+			"rawURL", util.SanitizeURLDefault(rawURL),
 			"attempt", attempt+1,
 			"backoff", backoff,
 			"max_retries", maxRetries)
@@ -466,22 +415,12 @@ func (t *Tester) makeHTTPRequestWithRetry(ctx context.Context, url string) (*htt
 }
 
 // makeHTTPRequest creates and executes an HTTP request, returning the response and duration
-func (t *Tester) makeHTTPRequest(ctx context.Context, url string) (*http.Response, time.Duration, error) {
+func (t *Tester) makeHTTPRequest(ctx context.Context, rawURL string) (*http.Response, time.Duration, error) {
 	startTime := time.Now()
 
-	// Create request
-	req, err := http.NewRequestWithContext(ctx, "GET", url, http.NoBody)
+	req, err := t.NewRequest(ctx, rawURL)
 	if err != nil {
-		return nil, 0, fmt.Errorf("creating request: %w", err)
-	}
-
-	// Set headers
-	req.Header.Set("User-Agent", t.config.UserAgent)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-
-	// Apply authentication
-	if err := t.applyAuthentication(req); err != nil {
-		return nil, 0, fmt.Errorf("applying authentication: %w", err)
+		return nil, 0, err
 	}
 
 	// Execute request
@@ -566,7 +505,7 @@ func (t *Tester) applyAuthentication(req *http.Request) error {
 // discoverLinksFromResponse extracts links from HTML responses and adds them to the crawl queue
 func (t *Tester) discoverLinksFromResponse(resp *http.Response, task domain.URLTask) int {
 	// Only process HTML responses
-	if !t.config.FollowLinks || task.Depth >= t.config.MaxDepth ||
+	if task.Depth >= t.config.MaxDepth ||
 		!strings.Contains(resp.Header.Get("Content-Type"), "text/html") {
 		return 0
 	}
@@ -584,21 +523,26 @@ func (t *Tester) discoverLinksFromResponse(resp *http.Response, task domain.URLT
 		return 0
 	}
 
-	// Limit body reading for link extraction (smaller than MaxResponseSize)
-	limitedReader := io.LimitReader(resp.Body, linkExtractionLimit)
-	body, readErr := io.ReadAll(limitedReader)
-	if readErr != nil && !errors.Is(readErr, io.EOF) {
-		t.logger.Debug("Error reading response body for link extraction",
-			"url", util.SanitizeURLDefault(task.URL),
-			"error", readErr)
+	// The page's URL after redirects; a test double may leave Request unset,
+	// and then the task URL is what was asked for.
+	page, err := url.Parse(task.URL)
+	if resp.Request != nil {
+		page, err = resp.Request.URL, nil
+	}
+	if err != nil {
 		return 0
 	}
+	if task.Depth == 0 {
+		t.crawler.SetBaseFinalURL(page)
+	}
 
-	// Extract and queue links
-	links := t.crawler.ExtractLinks(string(body))
+	links, readErr := t.crawler.ExtractLinks(io.LimitReader(resp.Body, maxSize), page)
+	if readErr != nil {
+		t.linksCutOff.Add(1)
+		t.recordError(task.URL, fmt.Sprintf("reading links: %v", readErr), task.Depth)
+	}
 	for _, link := range links {
-		result := t.crawler.AddURL(link, task.Depth+1, t.urlQueue)
-		if result.Added {
+		if t.enqueue(link, task.Depth+1) {
 			atomic.StoreInt64(&t.results.URLsDiscovered, int64(t.crawler.GetDiscoveredCount()))
 		}
 	}
@@ -609,12 +553,12 @@ func (t *Tester) discoverLinksFromResponse(resp *http.Response, task domain.URLT
 // recordError records an error encountered during testing.
 // Error messages are sanitized to hide internal infrastructure details
 // unless verbose mode is enabled.
-func (t *Tester) recordError(url, errMsg string, depth int) {
+func (t *Tester) recordError(rawURL, errMsg string, depth int) {
 	// Sanitize error message to hide internal details unless verbose
 	sanitizedErr := util.SanitizeErrorForDisplay(errMsg, t.config.Verbose)
 
 	errorInfo := domain.ErrorInfo{
-		URL:       url,
+		URL:       rawURL,
 		Error:     sanitizedErr,
 		Timestamp: time.Now(),
 		Depth:     depth,
@@ -622,20 +566,10 @@ func (t *Tester) recordError(url, errMsg string, depth int) {
 	t.addError(errorInfo)
 }
 
-// recordResponseTime records a response time measurement
-func (t *Tester) recordResponseTime(url string, responseTime time.Duration) {
-	entry := domain.ResponseTimeEntry{
-		URL:          url,
-		ResponseTime: responseTime,
-		Timestamp:    time.Now(),
-	}
-	t.addResponseTime(entry)
-}
-
 // recordSlowRequest records a slow request
-func (t *Tester) recordSlowRequest(url string, responseTime time.Duration, statusCode int) {
+func (t *Tester) recordSlowRequest(rawURL string, responseTime time.Duration, statusCode int) {
 	slowReq := domain.SlowRequest{
-		URL:          url,
+		URL:          rawURL,
 		ResponseTime: responseTime,
 		StatusCode:   statusCode,
 	}
@@ -649,10 +583,6 @@ func (t *Tester) addValidation(validation domain.URLValidation) {
 
 func (t *Tester) addError(errInfo domain.ErrorInfo) {
 	t.errorsCh <- errInfo
-}
-
-func (t *Tester) addResponseTime(entry domain.ResponseTimeEntry) {
-	t.responseTimesCh <- entry
 }
 
 func (t *Tester) addSlowRequest(req domain.SlowRequest) {
@@ -729,26 +659,12 @@ func (t *Tester) monitor(ctx context.Context, startTime time.Time) {
 func (t *Tester) calculateResults(duration time.Duration) {
 	t.results.Duration = duration.String()
 
-	// Calculate response time statistics
-	responseTimes := make([]time.Duration, len(t.results.ResponseTimes))
-	for i, entry := range t.results.ResponseTimes {
-		responseTimes[i] = entry.ResponseTime
-	}
-
-	if len(responseTimes) > 0 {
-		sort.Slice(responseTimes, func(i, j int) bool {
-			return responseTimes[i] < responseTimes[j]
-		})
-
-		t.results.MinResponseTime = responseTimes[0].String()
-		t.results.MaxResponseTime = responseTimes[len(responseTimes)-1].String()
-
-		// Calculate average
-		var total time.Duration
-		for _, rt := range responseTimes {
-			total += rt
-		}
-		t.results.AverageResponseTime = (total / time.Duration(len(responseTimes))).String()
+	if summary := t.results.ResponseTimes.Summary(); summary.Count > 0 {
+		t.results.MinResponseTime = summary.Min.String()
+		t.results.MaxResponseTime = summary.Max.String()
+		t.results.AverageResponseTime = summary.Mean.String()
+		t.results.P95ResponseTime = summary.P95.String()
+		t.results.P99ResponseTime = summary.P99.String()
 	}
 
 	// Calculate rates
@@ -764,4 +680,112 @@ func (t *Tester) calculateResults(duration time.Duration) {
 	sort.Slice(t.results.SlowRequests, func(i, j int) bool {
 		return t.results.SlowRequests[i].ResponseTime > t.results.SlowRequests[j].ResponseTime
 	})
+}
+
+// enqueue counts a task as pending before it becomes visible to workers.
+func (t *Tester) enqueue(rawURL string, depth int) bool {
+	t.pending.Add(1)
+	if t.crawler.AddURL(rawURL, depth, t.urlQueue).Added {
+		return true
+	}
+	t.finish()
+	return false
+}
+
+// finish marks one task done; the crawl is complete when none are pending.
+func (t *Tester) finish() {
+	if t.pending.Add(-1) == 0 {
+		t.doneOnce.Do(func() { close(t.done) })
+	}
+}
+
+// recordCompleteness sets CrawlComplete and IncompleteReason once workers have stopped.
+func (t *Tester) recordCompleteness() {
+	t.results.URLsDropped = int64(t.crawler.GetDroppedCount())
+	switch {
+	case t.results.URLsDropped > 0:
+		t.results.IncompleteReason = domain.IncompleteQueueFull
+		t.logger.Warn("URLs dropped due to queue overflow",
+			"dropped_count", t.results.URLsDropped,
+			"hint", "Increase -queue-size")
+	case t.pending.Load() > 0 || t.results.AbandonedRequests > 0:
+		t.results.IncompleteReason = domain.IncompleteDuration
+	case t.linksCutOff.Load() > 0:
+		t.results.IncompleteReason = domain.IncompleteLinksCutOff
+	default:
+		t.results.CrawlComplete = true
+	}
+}
+
+// effectiveRate applies robots.txt Crawl-delay as a ceiling: min(rate, 1/delay).
+func effectiveRate(rate float64, crawlDelay time.Duration) float64 {
+	if crawlDelay <= 0 {
+		return rate
+	}
+	return min(rate, 1/crawlDelay.Seconds())
+}
+
+// newTransport builds the HTTP transport every request goes through: control
+// checks each dialed address, there is no proxy (a proxy would dial the target
+// itself, bypassing the check), and maxConns connections go to the host.
+func newTransport(config domain.TesterConfig, maxConns int, control func(string, string, syscall.RawConn) error) *http.Transport {
+	transport := &http.Transport{
+		Proxy: nil,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+			Control:   control,
+		}).DialContext,
+		MaxIdleConns:        max(100, maxConns),
+		MaxIdleConnsPerHost: maxConns,
+		MaxConnsPerHost:     maxConns,
+		IdleConnTimeout:     90 * time.Second,
+		ForceAttemptHTTP2:   true,
+	}
+	if config.InsecureSkipVerify {
+		transport.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true, //nolint:gosec // Intentionally insecure for testing self-signed certs
+		}
+	}
+	return transport
+}
+
+// NewRequest builds a GET for rawURL with the run's user agent and authentication.
+func (t *Tester) NewRequest(ctx context.Context, rawURL string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("User-Agent", t.config.UserAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	if err := t.applyAuthentication(req); err != nil {
+		return nil, fmt.Errorf("applying authentication: %w", err)
+	}
+	return req, nil
+}
+
+// LoadClient returns a client with the crawl's dial check, TLS settings and
+// redirect policy, sized for maxConns concurrent connections. With
+// privateOnly it also refuses every public address: both checks must pass.
+func (t *Tester) LoadClient(maxConns int, privateOnly bool) *http.Client {
+	control := util.DialControl(t.config.AllowPrivateIPs)
+	if privateOnly {
+		crawlCheck, privateCheck := control, util.PrivateOnlyDialControl()
+		control = func(network, address string, c syscall.RawConn) error {
+			if err := crawlCheck(network, address, c); err != nil {
+				return err
+			}
+			return privateCheck(network, address, c)
+		}
+	}
+	return &http.Client{
+		Timeout:       t.config.RequestTimeout,
+		Transport:     newTransport(t.config, maxConns, control),
+		CheckRedirect: t.client.CheckRedirect,
+	}
+}
+
+// CrawlDelay returns the robots.txt Crawl-delay; 0 when there is none or robots.txt is ignored.
+func (t *Tester) CrawlDelay() time.Duration {
+	return t.crawlDelay
 }
