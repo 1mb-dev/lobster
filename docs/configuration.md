@@ -201,7 +201,7 @@ A crawl is complete when every discovered URL was requested: none dropped from a
 
 - Requests go out on schedule however slowly the server responds, and latency is measured from each request's scheduled send time, so a slow server shows in the latency instead of lowering the rate.
 - At most 256 requests are in flight; a request sent after waiting for a free slot is counted as late.
-- Nothing is sent after the `-load` window ends: a request still waiting for a slot then is counted as unsent and fails the run, and the run ends once the requests in flight finish (within `-timeout`).
+- No request due after the `-load` window is sent. A request still waiting for a free slot when the window ends is counted as unsent and fails the run; the run ends once the requests in flight finish (within `-timeout`).
 - 429 responses are not retried. After 10 consecutive 429 or 5xx responses the load stops, and the run exits 1.
 - `-rate` is capped at 1000 with `-load`. `-concurrency` applies to the crawl only.
 

@@ -86,9 +86,10 @@ func (r *run) abort(reason string) {
 // request's latency runs from its intended send time, so a slow server shows
 // in the latency instead of lowering the request rate. When all InFlight slots
 // are busy, a request waits for one and is counted late; once a slot frees,
-// requests already due go out at once. Nothing is sent after cfg.Duration:
-// requests still waiting then are counted unsent, and the run ends once the
-// requests in flight finish (within the client's timeout).
+// requests already due go out at once. No request due after cfg.Duration is
+// sent; a request still waiting for a slot when cfg.Duration ends is counted
+// unsent, and the run ends once the requests in flight finish (within the
+// client's timeout).
 func Run(ctx context.Context, cfg Config) (*domain.LoadResults, error) {
 	if len(cfg.URLs) == 0 {
 		return nil, fmt.Errorf("load: no URLs to replay")
@@ -105,7 +106,8 @@ func Run(ctx context.Context, cfg Config) (*domain.LoadResults, error) {
 
 	start := time.Now()
 	end := start.Add(cfg.Duration)
-	// Nothing is sent after end: a request still waiting for a slot then is unsent.
+	// Only the wait for a slot ends at end: a request due before end that finds
+	// a free slot is sent even when the loop reaches it after end.
 	windowCtx, windowCancel := context.WithDeadline(ctx, end)
 	defer windowCancel()
 	timer := time.NewTimer(0) // Reset without a drain needs Go 1.23+ timers (go.mod)
@@ -121,10 +123,7 @@ schedule:
 		if !intended.Before(end) {
 			break
 		}
-		// A request the loop sleeps for is sent if a slot is free, even when
-		// the timer wakes after end; one already overdue is not sent after end.
-		onTime := time.Until(intended) > 0
-		if !sleepUntil(ctx, timer, intended) || (!onTime && !time.Now().Before(end)) {
+		if !sleepUntil(ctx, timer, intended) {
 			break
 		}
 		select {

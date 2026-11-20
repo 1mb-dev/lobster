@@ -232,14 +232,15 @@ func TestRun_SendsLastRequestOnLateWake(t *testing.T) {
 	}
 }
 
-// A request reached only after the window has ended is not sent.
-func TestRun_SendsNothingReachedAfterWindow(t *testing.T) {
+// A request due inside the window that the loop reaches only after it (a busy
+// client) goes out when a slot is free: unsent counts slots held at the end.
+func TestRun_SendsDueRequestReachedAfterWindow(t *testing.T) {
 	client, url := runAgainst(t, func(http.ResponseWriter, *http.Request) {}, 1, time.Nanosecond)
 	res, err := Run(context.Background(), config(client, url, 1, time.Nanosecond))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Sent != 0 || res.Unsent != 1 {
-		t.Errorf("sent %d, unsent %d; want 0 and 1", res.Sent, res.Unsent)
+	if res.Sent != 1 || res.Unsent != 0 {
+		t.Errorf("sent %d, unsent %d; want 1 and 0", res.Sent, res.Unsent)
 	}
 }

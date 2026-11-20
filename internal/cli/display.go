@@ -57,8 +57,9 @@ OPTIONS:
     -load string
         After a complete crawl, replay the crawled URLs at -rate for this
         long (e.g. 30s): requests go out on schedule whatever the response
-        times, up to 256 in flight, nothing sent after the window;
-        stops early after 10 consecutive 429/5xx.
+        times, up to 256 in flight; a request still waiting for a slot
+        when the window ends is unsent and fails the run; stops early
+        after 10 consecutive 429/5xx.
         A public host, or a robots.txt Crawl-delay, needs -i-own-this and
         LOBSTER_I_OWN_THIS=<host>. -rate is capped at 1000 with -load.
     -i-own-this
