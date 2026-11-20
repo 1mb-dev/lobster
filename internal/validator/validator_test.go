@@ -1,6 +1,7 @@
 package validator
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"math"
@@ -223,5 +224,25 @@ func TestValidateResults_LoadPhase(t *testing.T) {
 	v.ValidateResults(crawl)
 	if v.Passed() || v.GetValidationSummary()["load_aborted"] != true {
 		t.Error("an aborted load should fail the run")
+	}
+}
+
+// A measured run: 706 sent, all successful, 194 of 900 due never sent. The
+// unsent requests' latency is missing, so the run must fail.
+func TestValidateResults_LoadWithUnsentFails(t *testing.T) {
+	crawl := results(1, 1)
+	crawl.Load = loadResults(706, 235.33)
+	crawl.Load.Unsent = 194
+
+	v := New(domain.DefaultPerformanceTargets())
+	v.ValidateResults(crawl)
+	if v.Passed() || v.GetValidationSummary()["load_unsent"] != int64(194) {
+		t.Errorf("passed %v, load_unsent %v; a load that left requests unsent must fail",
+			v.Passed(), v.GetValidationSummary()["load_unsent"])
+	}
+	var out bytes.Buffer
+	v.PrintValidationReport(&out)
+	if !strings.Contains(out.String(), "FAIL Load fell behind: 194 requests unsent") {
+		t.Errorf("report lacks the unsent line:\n%s", out.String())
 	}
 }

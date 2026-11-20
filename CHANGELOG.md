@@ -11,11 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `-load <duration>`: after a complete crawl, replays the crawled URLs open-loop at `-rate` for that long, up to 256 in flight, with latency measured from each request's scheduled send time; stops early after 10 consecutive 429/5xx responses
+- `-load <duration>`: after a complete crawl, replays the crawled URLs open-loop at `-rate` for that long, up to 256 in flight, with latency measured from each request's scheduled send time; stops early after 10 consecutive 429/5xx responses; nothing is sent after the window, and a request left unsent fails the run
 - `-load` ownership gate: a public host, or a robots.txt `Crawl-delay`, needs `-i-own-this` and `LOBSTER_I_OWN_THIS=<host>`
 - `-html <path>` writes the HTML report, with no external scripts
 - `LOBSTER_AUTH_HEADER` and `-auth-header-stdin` supply the `-auth-header` value
-- Exit codes: 0 pass; 1 a failed target, an incomplete crawl or an aborted load; 2 a usage, configuration or safety refusal, or a runtime error
+- Exit codes: 0 pass; 1 a failed target, an incomplete crawl, or a load that aborted or left requests unsent; 2 a usage, configuration or safety refusal, or a runtime error
 - JSON keys `crawl_complete`, `incomplete_reason`, `abandoned_requests`, `robots_blocked`, `urls_dropped`, `p95_response_time`, `p99_response_time`, `response_time_histogram` and `load`
 - robots.txt `Crawl-delay` lowers the crawl rate to one request per delay
 

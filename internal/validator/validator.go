@@ -25,6 +25,7 @@ type Validator struct {
 	crawlComplete    bool
 	incompleteReason string
 	loadAbortReason  string
+	loadUnsent       int64
 }
 
 // New creates a new performance validator
@@ -45,6 +46,7 @@ func (v *Validator) ValidateResults(results *domain.TestResults) {
 	v.crawlComplete = results.CrawlComplete
 	v.incompleteReason = results.IncompleteReason
 	v.loadAbortReason = ""
+	v.loadUnsent = 0
 	tc := v.targetConfig
 
 	l := results.Load
@@ -59,6 +61,7 @@ func (v *Validator) ValidateResults(results *domain.TestResults) {
 	if l.Aborted {
 		v.loadAbortReason = l.AbortReason
 	}
+	v.loadUnsent = l.Unsent
 	v.addSuccess("Crawl Success Rate", results.TotalRequests, results.SuccessfulRequests)
 	if tc.RequestsPerSecond > 0 {
 		v.add("Load Requests per Second",
@@ -117,9 +120,9 @@ func (v *Validator) add(name, target, actual string, passed bool) {
 }
 
 // Passed reports the verdict: the crawl completed, a load phase (if any) was
-// not aborted, and every enabled target passed.
+// not aborted and sent every scheduled request, and every enabled target passed.
 func (v *Validator) Passed() bool {
-	if !v.crawlComplete || v.loadAbortReason != "" {
+	if !v.crawlComplete || v.loadAbortReason != "" || v.loadUnsent > 0 {
 		return false
 	}
 	for _, target := range v.targets {
@@ -176,6 +179,9 @@ func (v *Validator) PrintValidationReport(w io.Writer) {
 	if v.loadAbortReason != "" {
 		fmt.Fprintf(w, "FAIL Load aborted: %s\n", v.loadAbortReason)
 	}
+	if v.loadUnsent > 0 {
+		fmt.Fprintf(w, "FAIL Load fell behind: %d requests unsent\n", v.loadUnsent)
+	}
 
 	fmt.Fprintf(w, "\nOverall: %s (%d/%d targets met)\n", v.status(), v.targetsMet(), len(v.targets))
 }
@@ -209,6 +215,7 @@ func (v *Validator) GetValidationSummary() map[string]interface{} {
 		"total_targets":  len(v.targets),
 		"crawl_complete": v.crawlComplete,
 		"load_aborted":   v.loadAbortReason != "",
+		"load_unsent":    v.loadUnsent,
 		"skipped":        append([]string{}, v.skipped...),
 		"overall_status": v.status(),
 		"targets":        targetDetails,

@@ -15,6 +15,7 @@
 .performance_validation
 .performance_validation.crawl_complete
 .performance_validation.load_aborted
+.performance_validation.load_unsent
 .performance_validation.overall_status
 .performance_validation.skipped
 .performance_validation.targets
