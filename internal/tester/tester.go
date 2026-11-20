@@ -280,15 +280,10 @@ func (t *Tester) processURL(ctx context.Context, task domain.URLTask) {
 		return
 	}
 
-	// A wait or request the deadline cuts off touches no request counter.
-	if err := t.rateLimiter.Wait(ctx); err != nil {
-		atomic.AddInt64(&t.results.AbandonedRequests, 1)
-		return
-	}
-
 	// Make HTTP request with 429 retry logic
 	resp, responseTime, err := t.makeHTTPRequestWithRetry(ctx, task.URL)
 	if err != nil {
+		// A wait or request the deadline cuts off touches no request counter.
 		if ctx.Err() != nil {
 			atomic.AddInt64(&t.results.AbandonedRequests, 1)
 			return
@@ -367,6 +362,10 @@ func (t *Tester) makeHTTPRequestWithRetry(ctx context.Context, rawURL string) (*
 	backoff := initialBackoff
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		// Every attempt waits on the shared limiter, retries included.
+		if err := t.rateLimiter.Wait(ctx); err != nil {
+			return nil, lastRequestDuration, err
+		}
 		resp, duration, err := t.makeHTTPRequest(ctx, rawURL)
 		lastRequestDuration = duration
 
