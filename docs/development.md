@@ -102,15 +102,3 @@ Response times go into a fixed histogram of 224 log buckets (8 per octave), so m
 5. Replace the generated notes with what upgraders must do, any security lines, and the changelog and compare links, then publish.
 
 `-version` reads the version from the build: `make build` passes `git describe` through ldflags, and `go install` records the module version.
-
-## Troubleshooting
-
-### The crawl is incomplete
-**Symptom**: `Crawl Complete: no (duration)`, `(queue_full)` or `(links_cut_off)`
-**Fix**: raise `-duration` or `-rate` for `duration`; raise `-queue-size` for `queue_full`; raise `-timeout` or `-duration` for `links_cut_off`, and check the page named in the errors
-
-### Many 429 or timeout errors
-**Fix**: lower `-rate`, raise `-timeout`
-
-### Only the base page is fetched
-**Fix**: check that the page has `<a href>` links to the same host, and that `-max-depth` is above 0

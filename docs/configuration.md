@@ -248,3 +248,13 @@ The default of 10,000 suits most sites. If the run reports `incomplete_reason: q
 ### robots.txt
 
 Lobster respects robots.txt by default, and checks it again on every redirect. Use `-ignore-robots` only when you own the site or have explicit permission.
+
+## Troubleshooting
+
+### Many 429 or timeout errors
+Lower `-rate` or raise `-timeout`.
+
+### Only the base page is fetched
+Check that the page has `<a href>` links to the same host, and that `-max-depth` is above 0.
+
+An incomplete crawl is covered under [Exit Codes](#exit-codes).
