@@ -5,19 +5,7 @@ nav_order: 6
 
 # Development Guide
 
-## Project Overview
-
-**Lobster** crawls a site from a base URL, fetches each page it finds, and checks response times and success rate against performance targets. With `-load`, it then replays the crawled pages open-loop at a fixed rate.
-
-**Repository**: https://github.com/1mb-dev/lobster
-**License**: MIT
-
-## What Makes Lobster Different
-
-1. **Crawler-first**: discovers the URLs to check (ab, wrk, hey and vegeta take a URL list)
-2. **Pass/fail**: targets and an exit code, not only metrics
-3. **Polite by default**: one rate limit shared by all workers, robots.txt and its `Crawl-delay` respected
-4. **Guarded connections**: every dialed address is checked, redirects stay on the base origin, and a load against a public host needs an ownership acknowledgement
+Branches, commits and pull requests: [Contributing](contributing).
 
 ## Architecture
 
@@ -93,9 +81,9 @@ Response times go into a fixed histogram of 224 log buckets (8 per octave), so m
 
 ## Key Dependencies
 
-**goflow** (v1.6.0): token bucket rate limiting for the crawl (`internal/tester`).
+**goflow**: token bucket rate limiting for the crawl (`internal/tester`).
 
-**golang.org/x/net** (v0.62.0): `html.Tokenizer` for link extraction (`internal/crawler`).
+**golang.org/x/net**: `html.Tokenizer` for link extraction (`internal/crawler`).
 
 ## Common Tasks
 
@@ -114,28 +102,6 @@ Response times go into a fixed histogram of 224 log buckets (8 per octave), so m
 
 `-version` reads the version from the build: `make build` passes `git describe` through ldflags, and `go install` records the module version.
 
-## Git Workflow
-
-### Commit Message Format
-
-```
-type(scope): description
-```
-
-**Types**: feat, fix, docs, refactor, test, chore, perf
-
-**Examples**:
-```
-feat(load): add the ownership gate
-fix(crawler): normalize an empty path to /
-docs(readme): update installation instructions
-```
-
-### Branch Strategy
-
-- `main`: stable, releasable code
-- `feat/*`, `fix/*`, `docs/*`: work branches
-
 ## Troubleshooting
 
 ### The crawl is incomplete
@@ -147,15 +113,3 @@ docs(readme): update installation instructions
 
 ### Only the base page is fetched
 **Fix**: check that the page has `<a href>` links to the same host, and that `-max-depth` is above 0
-
-## Resources
-
-- [goflow](https://github.com/1mb-dev/goflow)
-- [Go testing](https://go.dev/doc/tutorial/add-a-test)
-- [Semantic versioning](https://semver.org/)
-
-## Contact
-
-- **Issues**: https://github.com/1mb-dev/lobster/issues
-- **Discussions**: https://github.com/1mb-dev/lobster/discussions
-- **Pull Requests**: see [contributing](contributing)
