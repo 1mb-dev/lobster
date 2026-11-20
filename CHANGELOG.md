@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A `-rate` below 1 with stdin from `/dev/null` continues without the confirmation prompt instead of exiting 2
+- After the last retry of a 429, the 429 is reported without sending one more request
 
 ## [2.1.0] - 2026-11-20
 

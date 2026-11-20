@@ -1045,9 +1045,9 @@ func TestMakeHTTPRequestWithRetry_429MaxRetries(t *testing.T) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Should have made 5 attempts (initial + 4 retries) + 1 final request
-	if count := getCount(); count != 6 {
-		t.Errorf("Expected 6 requests (5 attempts + 1 final), got %d", count)
+	// The initial request and 4 retries; the last 429 is returned as is
+	if count := getCount(); count != 5 {
+		t.Errorf("Expected 5 requests (initial + 4 retries), got %d", count)
 	}
 
 	if resp.StatusCode != http.StatusTooManyRequests {

@@ -375,18 +375,12 @@ func (t *Tester) makeHTTPRequestWithRetry(ctx context.Context, rawURL string) (*
 			return nil, lastRequestDuration, err
 		}
 
-		if resp.StatusCode != http.StatusTooManyRequests {
+		if resp.StatusCode != http.StatusTooManyRequests || attempt == maxRetries {
 			return resp, lastRequestDuration, nil
 		}
 
 		// Close the 429 response body before retrying
 		_ = resp.Body.Close()
-
-		// If this was the last attempt, return the 429 response
-		if attempt == maxRetries {
-			// Re-make request one final time to return a valid response object
-			return t.makeHTTPRequest(ctx, rawURL)
-		}
 
 		// Log the backoff
 		t.logger.Info("Received 429 Too Many Requests, backing off",
