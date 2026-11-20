@@ -303,7 +303,7 @@ func TestRun_LoadSkippedWhenNoPageResponded(t *testing.T) {
 	server.Close()
 
 	var stdout, stderr bytes.Buffer
-	if got := run(local(url, "-load", "1s"), &stdout, &stderr); got != exitFail {
+	if got := run(local(url, "-load", "1s", "-ignore-robots"), &stdout, &stderr); got != exitFail {
 		t.Fatalf("run = %d, want %d\n%s", got, exitFail, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "Overall: FAIL") || !strings.Contains(stderr.String(), "Load skipped") {
@@ -311,12 +311,14 @@ func TestRun_LoadSkippedWhenNoPageResponded(t *testing.T) {
 	}
 }
 
-// The load replays only pages that responded 200-399.
+// The load replays only pages that responded 200-399. The crawl's 404 fails
+// the success-rate target, so the run exits 1 after the load.
 func TestRun_LoadReplaysOnlyPagesThatResponded(t *testing.T) {
-	var missing atomic.Int64
+	var root, missing atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
+			root.Add(1)
 			_, _ = w.Write([]byte(`<a href="/gone">x</a>`))
 		case "/gone":
 			missing.Add(1)
@@ -328,7 +330,12 @@ func TestRun_LoadReplaysOnlyPagesThatResponded(t *testing.T) {
 	defer server.Close()
 
 	var stdout, stderr bytes.Buffer
-	run(local(server.URL+"/", "-load", "1s"), &stdout, &stderr)
+	if got := run(local(server.URL+"/", "-load", "1s", "-ignore-robots"), &stdout, &stderr); got != exitFail {
+		t.Fatalf("run = %d, want %d\n%s", got, exitFail, stderr.String())
+	}
+	if n := root.Load(); n < 2 {
+		t.Errorf("/ requested %d times; want the crawl's request and the load's", n)
+	}
 	if n := missing.Load(); n != 1 {
 		t.Errorf("/gone requested %d times; want once, by the crawl", n)
 	}
@@ -337,7 +344,9 @@ func TestRun_LoadReplaysOnlyPagesThatResponded(t *testing.T) {
 func TestRun_VerboseFromConfigFile(t *testing.T) {
 	config := writeFile(t, "c.json", `{"verbose": true}`)
 	var stdout, stderr bytes.Buffer
-	run(local(testSite(t), "-config", config), &stdout, &stderr)
+	if got := run(local(testSite(t), "-config", config, "-ignore-robots"), &stdout, &stderr); got != exitPass {
+		t.Fatalf("run = %d, want %d\n%s", got, exitPass, stderr.String())
+	}
 	if !strings.Contains(stderr.String(), `"level":"DEBUG"`) {
 		t.Errorf("\"verbose\": true in the config file logged no debug lines:\n%s", stderr.String())
 	}
