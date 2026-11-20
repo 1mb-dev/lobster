@@ -34,7 +34,7 @@ lobster -url http://localhost:3000 -allow-private-ips
 ```
 
 This will:
-- Follow same-host links from the base page up to depth 3 and fetch each page once
+- Follow same-host links from the base page up to depth 3 and fetch each page once (on an http base, pages reached through an `https://` link are fetched over https as well)
 - Space requests at 2 per second (default `-rate`), shared by 5 workers
 - Stop when every page has been fetched, or after 2 minutes (default `-duration`)
 - Print a summary and a PASS or FAIL line per performance target, and exit 0 on PASS, 1 on FAIL

@@ -135,8 +135,8 @@ docs(readme): update installation instructions
 ## Troubleshooting
 
 ### The crawl is incomplete
-**Symptom**: `Crawl Complete: no (duration)` or `(queue_full)`
-**Fix**: raise `-duration` or `-rate` for `duration`; raise `-queue-size` for `queue_full`
+**Symptom**: `Crawl Complete: no (duration)`, `(queue_full)` or `(links_cut_off)`
+**Fix**: raise `-duration` or `-rate` for `duration`; raise `-queue-size` for `queue_full`; raise `-timeout` or `-duration` for `links_cut_off`, and check the page named in the errors
 
 ### Many 429 or timeout errors
 **Fix**: lower `-rate`, raise `-timeout`
