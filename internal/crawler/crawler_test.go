@@ -383,23 +383,28 @@ func TestGetDroppedCount(t *testing.T) {
 // URL, empty when the link is refused.
 func TestAddURL_SchemeDowngrade(t *testing.T) {
 	tests := []struct {
-		name, base, link, want string
+		name, base, final, link, want string
 	}{
-		{"https base, http link", "https://example.com", "http://example.com/x", "https://example.com/x"},
-		{"https base, http link on port 80", "https://example.com", "http://example.com:80/x", "https://example.com/x"},
-		{"https base, http link on another port", "https://example.com", "http://example.com:8080/x", ""},
-		{"https base on another port, http link", "https://example.com:8443", "http://example.com/x", ""},
-		{"http base, https link", "http://example.com", "https://example.com/x", "https://example.com/x"},
-		{"http base, https link on port 443", "http://example.com", "https://example.com:443/x", "https://example.com/x"},
-		{"http base on port 80, https link", "http://example.com:80", "https://EXAMPLE.com:443/x", "https://example.com/x"},
-		{"http base on an IPv6 address, https link", "http://[::1]:80", "https://[::1]:443/x", "https://[::1]/x"},
-		{"same scheme", "https://example.com", "https://example.com/x", "https://example.com/x"},
-		{"same scheme, default port spelled out", "https://example.com", "https://EXAMPLE.com:443/x", "https://example.com/x"},
-		{"upgrade on a custom port", "http://example.com:8080", "https://example.com:8080/x", ""},
+		{"https base, http link", "https://example.com", "", "http://example.com/x", "https://example.com/x"},
+		{"https base, http link on port 80", "https://example.com", "", "http://example.com:80/x", "https://example.com/x"},
+		{"https base, http link on another port", "https://example.com", "", "http://example.com:8080/x", ""},
+		{"https base on another port, http link", "https://example.com:8443", "", "http://example.com/x", ""},
+		{"http base served over https, https link", "http://example.com", "https://example.com/", "https://example.com/x", "https://example.com/x"},
+		{"http base served over https, https link on port 443", "http://example.com", "https://example.com/", "https://example.com:443/x", "https://example.com/x"},
+		{"http base on port 80 served over https, https link", "http://example.com:80", "https://example.com/", "https://EXAMPLE.com:443/x", "https://example.com/x"},
+		{"http base on an IPv6 address served over https, https link", "http://[::1]:80", "https://[::1]/", "https://[::1]:443/x", "https://[::1]/x"},
+		{"http base served over http, https link", "http://example.com", "http://example.com/", "https://example.com:443/x", "http://example.com/x"},
+		{"same scheme", "https://example.com", "", "https://example.com/x", "https://example.com/x"},
+		{"same scheme, default port spelled out", "https://example.com", "", "https://EXAMPLE.com:443/x", "https://example.com/x"},
+		{"upgrade on a custom port", "http://example.com:8080", "", "https://example.com:8080/x", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, _ := New(tt.base, 3)
+			if tt.final != "" {
+				final, _ := url.Parse(tt.final)
+				c.SetBaseFinalURL(final)
+			}
 			queue := make(chan domain.URLTask, 1)
 			res := c.AddURL(tt.link, 1, queue)
 			got := ""
@@ -430,6 +435,36 @@ func TestAddURL_SchemePairIsOnePage(t *testing.T) {
 		}
 		if res := c.AddURL(tt.second, 1, queue); res.Reason != domain.AddURLDuplicate {
 			t.Errorf("%s after %s on %s: %s, want %s", tt.second, tt.first, tt.base, res.Reason, domain.AddURLDuplicate)
+		}
+	}
+}
+
+// The http:80 and https:443 spellings of a page are queued with the scheme the
+// base page was served over, whichever spelling a link uses and whichever is
+// found first.
+func TestAddURL_SpellingFollowsBaseNotOrder(t *testing.T) {
+	tests := []struct{ name, final, want string }{
+		{"base stayed on http", "http://example.com/", "http://example.com/p"},
+		{"base redirected to https", "https://example.com/home", "https://example.com/p"},
+	}
+	for _, tt := range tests {
+		for _, order := range [][]string{
+			{"http://example.com/p", "https://example.com/p"},
+			{"https://example.com/p", "http://example.com/p"},
+		} {
+			c, _ := New("http://example.com", 3)
+			final, _ := url.Parse(tt.final)
+			c.SetBaseFinalURL(final)
+			queue := make(chan domain.URLTask, 2)
+			for _, link := range order {
+				c.AddURL(link, 1, queue)
+			}
+			if len(queue) != 1 {
+				t.Fatalf("%s, %v: %d queued, want 1", tt.name, order, len(queue))
+			}
+			if got := (<-queue).URL; got != tt.want {
+				t.Errorf("%s, %v: queued %s, want %s", tt.name, order, got, tt.want)
+			}
 		}
 	}
 }

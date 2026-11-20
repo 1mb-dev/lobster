@@ -546,6 +546,9 @@ func (t *Tester) discoverLinksFromResponse(resp *http.Response, task domain.URLT
 	if err != nil {
 		return 0
 	}
+	if task.Depth == 0 {
+		t.crawler.SetBaseFinalURL(page)
+	}
 
 	links := t.crawler.ExtractLinks(string(body), page)
 	for _, link := range links {

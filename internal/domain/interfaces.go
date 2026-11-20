@@ -13,6 +13,10 @@ type URLCrawler interface {
 	// resolved against the body's <base href> or page.
 	ExtractLinks(body string, page *url.URL) []string
 
+	// SetBaseFinalURL records the URL the base page was served from, after
+	// redirects; pages on the base origin are queued with its scheme.
+	SetBaseFinalURL(final *url.URL)
+
 	// AddURL adds a URL to the discovery queue if valid and not already discovered.
 	// Returns an AddURLResult with the outcome and reason.
 	AddURL(rawURL string, depth int, queue chan<- URLTask) AddURLResult

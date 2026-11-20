@@ -1247,3 +1247,13 @@ func TestDiscoverLinks_NoRequestUsesTaskURL(t *testing.T) {
 		t.Errorf("queued %v, want %v", got, want)
 	}
 }
+
+// The base page's final URL sets the scheme its links are queued with: an
+// http base redirected to https queues an http link over https.
+func TestDiscoverLinks_BaseRedirectSetsScheme(t *testing.T) {
+	served := &url.URL{Scheme: "https", Host: "example.com", Path: "/"}
+	got := discover(t, "http://example.com", served, domain.URLTask{URL: "http://example.com", Depth: 0}, `<a href="http://example.com/p">`)
+	if want := []string{"https://example.com/p"}; !slices.Equal(got, want) {
+		t.Errorf("queued %v, want %v", got, want)
+	}
+}

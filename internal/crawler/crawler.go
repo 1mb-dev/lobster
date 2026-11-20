@@ -17,6 +17,7 @@ import (
 type Crawler struct {
 	discoveredURLs sync.Map
 	baseURL        *url.URL
+	scheme         atomic.Pointer[string] // the scheme pages on the base origin are queued with
 	maxDepth       int
 	discoveredCnt  atomic.Int64 // O(1) counter for discovered URLs
 	droppedCnt     atomic.Int64 // Counter for URLs dropped due to queue full
@@ -29,10 +30,24 @@ func New(baseURL string, maxDepth int) (*Crawler, error) {
 		return nil, err
 	}
 
-	return &Crawler{
+	c := &Crawler{
 		baseURL:  parsedURL,
 		maxDepth: maxDepth,
-	}, nil
+	}
+	scheme := strings.ToLower(parsedURL.Scheme)
+	c.scheme.Store(&scheme)
+	return c, nil
+}
+
+// SetBaseFinalURL records the URL the base page was served from, after
+// redirects: an http base on port 80 that ended on https queues its pages
+// over https, and one that stayed on http queues them over http, whichever
+// spelling a link uses. A URL off the base origin is ignored.
+func (c *Crawler) SetBaseFinalURL(final *url.URL) {
+	if util.SameOrigin(c.baseURL, final) {
+		scheme := strings.ToLower(final.Scheme)
+		c.scheme.Store(&scheme)
+	}
 }
 
 // ExtractLinks returns the href of every <a> element in an HTML body, resolved
@@ -133,8 +148,10 @@ func (c *Crawler) AddURL(rawURL string, depth int, urlQueue chan<- domain.URLTas
 	if !util.SameOrigin(c.baseURL, parsedURL) {
 		return domain.AddURLResult{Added: false, Reason: domain.AddURLInvalidHost}
 	}
-	// One spelling per page, for dedup. SameOrigin leaves a scheme change only
-	// for an http base on port 80 and an https link on 443.
+	// One spelling per page: SameOrigin leaves a scheme change only for an
+	// http base on port 80 and an https link on 443, and both are queued with
+	// the scheme the base page was served over.
+	parsedURL.Scheme = *c.scheme.Load()
 	if strings.EqualFold(parsedURL.Scheme, c.baseURL.Scheme) {
 		parsedURL.Host = c.baseURL.Host
 	} else {
