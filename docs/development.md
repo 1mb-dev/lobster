@@ -58,9 +58,13 @@ make test           # every package under the race detector, integration tests i
 make test-verbose   # the same, verbose
 make test-coverage  # coverage report
 make lint           # golangci-lint
+go test ./internal/tester -run TestRedirect                      # matching tests in one package
+go test ./cmd/lobster -run TestRun_JSONKeysMatchGolden -update   # regenerate the JSON key golden files
 ```
 
-See [testing](testing) for the testing guide.
+- Tests use `httptest` servers only, never real endpoints; set `IgnoreRobots: true` unless robots.txt is under test.
+- `cmd/lobster/main_test.go` runs the whole command through `run()` and checks exit codes, output and the JSON keys against `cmd/lobster/testdata/*.golden`. A JSON key change fails it until the golden files are regenerated.
+- The rate, Crawl-delay and load tests run on real clocks and take seconds each.
 
 ## Key Implementation Details
 

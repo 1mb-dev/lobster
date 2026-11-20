@@ -54,7 +54,6 @@ See the [Quick Start Guide](quickstart) for more examples.
 | Guide | Description |
 |-------|-------------|
 | [Development](development) | Project structure and development workflow |
-| [Testing](testing) | Testing strategy and coverage goals |
 | [Contributing](contributing) | How to contribute to Lobster |
 
 ## Responsible Use
