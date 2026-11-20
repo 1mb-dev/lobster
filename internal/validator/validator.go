@@ -179,7 +179,7 @@ func (v *Validator) PrintValidationReport(w io.Writer) {
 	if v.loadAbortReason != "" {
 		fmt.Fprintf(w, "FAIL Load aborted: %s\n", v.loadAbortReason)
 	}
-	if v.loadUnsent > 0 {
+	if v.loadUnsent > 0 && v.loadAbortReason == "" {
 		fmt.Fprintf(w, "FAIL Load fell behind: %d requests unsent\n", v.loadUnsent)
 	}
 

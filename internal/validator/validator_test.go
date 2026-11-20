@@ -225,6 +225,15 @@ func TestValidateResults_LoadPhase(t *testing.T) {
 	if v.Passed() || v.GetValidationSummary()["load_aborted"] != true {
 		t.Error("an aborted load should fail the run")
 	}
+
+	// An aborted load also counts the requests it never sent; one cause, one FAIL line.
+	crawl.Load.Unsent = 150
+	v.ValidateResults(crawl)
+	var out strings.Builder
+	v.PrintValidationReport(&out)
+	if strings.Contains(out.String(), "fell behind") {
+		t.Errorf("an aborted load printed a second FAIL line:\n%s", out.String())
+	}
 }
 
 // A measured run: 706 sent, all successful, 194 of 900 due never sent. The

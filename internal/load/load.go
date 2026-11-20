@@ -157,9 +157,8 @@ schedule:
 	window := cfg.Duration
 	if r.abortReason != "" {
 		window = stopped
-	} else {
-		r.unsent = int64(dueCount(cfg.Rate, cfg.Duration)) - r.sent.Load()
 	}
+	r.unsent = int64(dueCount(cfg.Rate, cfg.Duration)) - r.sent.Load()
 	return r.results(cfg, window), nil
 }
 
@@ -225,8 +224,8 @@ func (r *run) results(cfg Config, scheduled time.Duration) *domain.LoadResults {
 	if scheduled > 0 {
 		res.AchievedRate = float64(res.Sent) / scheduled.Seconds()
 	}
-	if res.Sent > 0 {
-		res.SuccessRate = float64(res.Successful) / float64(res.Sent) * 100
+	if done := res.Successful + res.Failed; done > 0 {
+		res.SuccessRate = float64(res.Successful) / float64(done) * 100
 	}
 	return res
 }

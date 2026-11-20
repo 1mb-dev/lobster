@@ -166,6 +166,21 @@ func TestRun_AbortsOnConsecutive5xx(t *testing.T) {
 	if res.Failed < AbortAfter || res.Successful != 0 {
 		t.Errorf("failed=%d successful=%d", res.Failed, res.Successful)
 	}
+	if due := int64(dueCount(50, 5*time.Second)); res.Sent+res.Unsent != due {
+		t.Errorf("sent %d + unsent %d != %d due", res.Sent, res.Unsent, due)
+	}
+}
+
+// Requests cut off by an abort are sent but neither successful nor failed;
+// the success rate leaves them out, as the validator does.
+func TestResults_SuccessRateOfFinishedRequests(t *testing.T) {
+	r := &run{hist: stats.NewHistogram(), cancel: func() {}}
+	r.sent.Store(10)
+	r.successful.Store(6)
+	r.failed.Store(2)
+	if got := r.results(Config{Rate: 1}, time.Second).SuccessRate; got != 75 {
+		t.Errorf("success rate = %v, want 75 (6 of 8 finished)", got)
+	}
 }
 
 func TestRecord_DoesNotAllocate(t *testing.T) {
