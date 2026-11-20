@@ -2,6 +2,7 @@
 package util
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -160,5 +161,29 @@ func TestURLValidationError_Error(t *testing.T) {
 	expected := `invalid URL "file:///etc/passwd": unsupported scheme`
 	if err.Error() != expected {
 		t.Errorf("Error() = %q, want %q", err.Error(), expected)
+	}
+}
+
+func TestSameOrigin(t *testing.T) {
+	tests := []struct {
+		base, target string
+		want         bool
+	}{
+		{"http://example.com/", "http://example.com/a", true},
+		{"http://example.com/", "http://EXAMPLE.com:80/a", true},
+		{"http://example.com/", "https://example.com/a", true}, // upgrade 80→443
+		{"https://example.com/", "https://example.com:443/a", true},
+		{"https://example.com/", "http://example.com/a", false},       // downgrade
+		{"https://example.com/", "https://example.com:8443/a", false}, // another port
+		{"http://example.com:8080/", "http://example.com/a", false},
+		{"http://example.com:8080/", "https://example.com/a", false}, // not the 80→443 upgrade
+		{"http://example.com/", "http://www.example.com/a", false},
+	}
+	for _, tt := range tests {
+		base, _ := url.Parse(tt.base)
+		target, _ := url.Parse(tt.target)
+		if got := SameOrigin(base, target); got != tt.want {
+			t.Errorf("SameOrigin(%s, %s) = %v, want %v", tt.base, tt.target, got, tt.want)
+		}
 	}
 }

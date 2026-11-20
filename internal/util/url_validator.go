@@ -74,3 +74,28 @@ func validateNotPrivateIP(hostname string) error {
 	}
 	return nil
 }
+
+// SameOrigin reports whether target has base's hostname, scheme and port, or
+// is the http→https upgrade of base (port 80 to 443). A downgrade is refused.
+func SameOrigin(base, target *url.URL) bool {
+	if !strings.EqualFold(base.Hostname(), target.Hostname()) {
+		return false
+	}
+	bs, ts := strings.ToLower(base.Scheme), strings.ToLower(target.Scheme)
+	bp, tp := PortOf(base), PortOf(target)
+	if bs == ts {
+		return bp == tp
+	}
+	return bs == "http" && ts == "https" && bp == "80" && tp == "443"
+}
+
+// PortOf returns u's port, or the scheme's default.
+func PortOf(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return "443"
+	}
+	return "80"
+}

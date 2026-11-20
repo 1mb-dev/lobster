@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/1mb-dev/lobster/v2/internal/robots"
 	"github.com/1mb-dev/lobster/v2/internal/util"
@@ -41,7 +40,7 @@ func redirectPolicy(base *url.URL, rp *robots.Parser, ignoreRobots bool) func(*h
 		if len(via) >= maxRedirects {
 			return refuse(fmt.Sprintf("more than %d redirects", maxRedirects))
 		}
-		if !sameOrigin(base, req.URL) {
+		if !util.SameOrigin(base, req.URL) {
 			return refuse(fmt.Sprintf("it leaves the base origin %s://%s; to crawl %s://%s, pass it as -url",
 				base.Scheme, base.Host, req.URL.Scheme, req.URL.Host))
 		}
@@ -50,31 +49,6 @@ func redirectPolicy(base *url.URL, rp *robots.Parser, ignoreRobots bool) func(*h
 		}
 		return nil
 	}
-}
-
-// sameOrigin reports whether target has base's hostname, scheme and port, or
-// is the http→https upgrade of base (port 80 to 443). A downgrade is refused.
-func sameOrigin(base, target *url.URL) bool {
-	if !strings.EqualFold(base.Hostname(), target.Hostname()) {
-		return false
-	}
-	bs, ts := strings.ToLower(base.Scheme), strings.ToLower(target.Scheme)
-	bp, tp := portOf(base), portOf(target)
-	if bs == ts {
-		return bp == tp
-	}
-	return bs == "http" && ts == "https" && bp == "80" && tp == "443"
-}
-
-// portOf returns u's port, or the scheme's default.
-func portOf(u *url.URL) string {
-	if p := u.Port(); p != "" {
-		return p
-	}
-	if strings.EqualFold(u.Scheme, "https") {
-		return "443"
-	}
-	return "80"
 }
 
 // refusal returns the safety refusal inside err (a blocked dial address or a
