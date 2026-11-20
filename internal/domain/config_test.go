@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"math"
 	"testing"
 )
 
@@ -120,6 +121,16 @@ func TestConfig_Validate_Invalid(t *testing.T) {
 			name:    "rate below MinRate",
 			modify:  func(c *Config) { c.Rate = 0.05 },
 			wantErr: "rate must be at least 0.1 req/s",
+		},
+		{
+			name:    "NaN rate",
+			modify:  func(c *Config) { c.Rate = math.NaN() },
+			wantErr: "rate must be a finite number",
+		},
+		{
+			name:    "infinite rate",
+			modify:  func(c *Config) { c.Rate = math.Inf(1) },
+			wantErr: "rate must be a finite number",
 		},
 		{
 			name:    "zero duration",

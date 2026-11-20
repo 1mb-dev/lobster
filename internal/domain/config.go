@@ -3,6 +3,7 @@ package domain
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -135,8 +136,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("queue-size must be > 0, got %d", c.QueueSize)
 	}
 
-	if c.Rate < MinRate {
-		return fmt.Errorf("rate must be at least %.1f req/s, got %g", MinRate, c.Rate)
+	if err := c.validateRate(); err != nil {
+		return err
 	}
 
 	if err := positiveDuration("duration", c.Duration); err != nil {
@@ -171,6 +172,18 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+// validateRate refuses a rate that is not finite or is below MinRate; NaN
+// passes every comparison and would hang the load schedule.
+func (c *Config) validateRate() error {
+	if math.IsNaN(c.Rate) || math.IsInf(c.Rate, 0) {
+		return fmt.Errorf("rate must be a finite number, got %g", c.Rate)
+	}
+	if c.Rate < MinRate {
+		return fmt.Errorf("rate must be at least %.1f req/s, got %g", MinRate, c.Rate)
+	}
 	return nil
 }
 
