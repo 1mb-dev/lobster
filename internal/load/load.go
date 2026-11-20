@@ -188,7 +188,7 @@ func acquire(windowCtx context.Context, slots chan struct{}, afterWait func()) (
 	freedAt = time.Now()
 	// The deadline's timer can fire late, and select picks at random when
 	// both cases are ready: a slot taken after the window is given back.
-	if end, _ := windowCtx.Deadline(); windowCtx.Err() != nil || !freedAt.Before(end) {
+	if end, ok := windowCtx.Deadline(); windowCtx.Err() != nil || ok && !freedAt.Before(end) {
 		<-slots
 		return false, time.Time{}
 	}

@@ -401,15 +401,16 @@ func TestRun_LateAndUnsentByCause(t *testing.T) {
 	}
 }
 
-// lateWindow is a window whose deadline has passed but whose timer has not
-// fired; its first Done call frees the slot acquire is waiting for.
+// lateWindow is a window whose deadline, end, has passed but whose timer has
+// not fired (no deadline when end is zero); its first Done call frees the
+// slot acquire is waiting for.
 type lateWindow struct {
 	context.Context
 	end  time.Time
 	free func()
 }
 
-func (w lateWindow) Deadline() (time.Time, bool) { return w.end, true }
+func (w lateWindow) Deadline() (time.Time, bool) { return w.end, !w.end.IsZero() }
 
 func (w lateWindow) Done() <-chan struct{} {
 	w.free()
@@ -426,5 +427,18 @@ func TestAcquire_GivesBackSlotAfterWindow(t *testing.T) {
 	got, _ := acquire(window, slots, func() { t.Error("afterWait ran for a slot taken after the window") })
 	if got || len(slots) != 0 {
 		t.Errorf("got %v with %d slots held; want false and 0", got, len(slots))
+	}
+}
+
+// Without a deadline, a slot that comes free after a wait is kept.
+func TestAcquire_KeepsSlotWithoutDeadline(t *testing.T) {
+	slots := make(chan struct{}, 1)
+	slots <- struct{}{}
+	var once sync.Once
+	window := lateWindow{context.Background(), time.Time{}, func() { once.Do(func() { go func() { <-slots }() }) }}
+	waited := 0
+	got, freedAt := acquire(window, slots, func() { waited++ })
+	if !got || freedAt.IsZero() || waited != 1 || len(slots) != 1 {
+		t.Errorf("got %v, freed at %v, afterWait ran %d times, %d slots held; want true, a time, 1 and 1", got, freedAt, waited, len(slots))
 	}
 }
