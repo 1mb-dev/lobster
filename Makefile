@@ -96,7 +96,7 @@ install:
 	$(GOINSTALL) $(LDFLAGS) $(CMD_DIR)
 	@echo "Installed to $(GOPATH)/bin/$(BINARY_NAME)"
 
-## run: Build and run with example arguments
+## run: Build and print the help
 run: build
 	@echo "Running $(BINARY_NAME)..."
 	./$(BINARY_NAME) -help
@@ -124,6 +124,7 @@ pre-commit: fmt vet test
 # Default target
 .DEFAULT_GOAL := help
 
+## setup: Bootstrap repo: install git hooks
 .PHONY: setup
 setup: ## Bootstrap repo: install git hooks
 	@scripts/setup.sh
