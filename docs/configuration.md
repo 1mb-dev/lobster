@@ -197,7 +197,7 @@ A crawl is complete when every discovered URL was requested: none dropped from a
 
 ## Load Phase
 
-`-load 30s` runs after a complete crawl. It sends one request every `1/-rate` seconds to the crawled URLs in turn:
+`-load 30s` runs after a complete crawl. It sends one request every `1/-rate` seconds to the crawled pages that responded 200-399, in turn:
 
 - Requests go out on schedule however slowly the server responds, and latency is measured from each request's scheduled send time, so a slow server shows in the latency instead of lowering the rate.
 - At most 256 requests are in flight; a request sent after waiting for a free slot is counted as late.

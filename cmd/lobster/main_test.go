@@ -294,3 +294,42 @@ func TestRun_LoadAbortExits1(t *testing.T) {
 		t.Errorf("JSON has no load_aborted: true:\n%s", data)
 	}
 }
+
+// A crawl that fetched no page skips the load: the crawl's verdict decides,
+// with the report printed.
+func TestRun_LoadSkippedWhenNoPageResponded(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	url := server.URL + "/"
+	server.Close()
+
+	var stdout, stderr bytes.Buffer
+	if got := run(local(url, "-load", "1s"), &stdout, &stderr); got != exitFail {
+		t.Fatalf("run = %d, want %d\n%s", got, exitFail, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Overall: FAIL") || !strings.Contains(stderr.String(), "Load skipped") {
+		t.Errorf("want the crawl's FAIL report and a skip warning\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+	}
+}
+
+// The load replays only pages that responded 200-399.
+func TestRun_LoadReplaysOnlyPagesThatResponded(t *testing.T) {
+	var missing atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			_, _ = w.Write([]byte(`<a href="/gone">x</a>`))
+		case "/gone":
+			missing.Add(1)
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	run(local(server.URL+"/", "-load", "1s"), &stdout, &stderr)
+	if n := missing.Load(); n != 1 {
+		t.Errorf("/gone requested %d times; want once, by the crawl", n)
+	}
+}

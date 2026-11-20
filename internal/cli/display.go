@@ -55,11 +55,11 @@ OPTIONS:
         Time limit for the crawl (default: 2m); the run ends sooner when
         every page has been fetched
     -load string
-        After a complete crawl, replay the crawled URLs at -rate for this
-        long (e.g. 30s): requests go out on schedule whatever the response
-        times, up to 256 in flight; a request still waiting for a slot
-        when the window ends is unsent and fails the run; stops early
-        after 10 consecutive 429/5xx.
+        After a complete crawl, replay the crawled pages that responded
+        200-399 at -rate for this long (e.g. 30s): requests go out on
+        schedule whatever the response times, up to 256 in flight; a
+        request still waiting for a slot when the window ends is unsent
+        and fails the run; stops early after 10 consecutive 429/5xx.
         A public host, or a robots.txt Crawl-delay, needs -i-own-this and
         LOBSTER_I_OWN_THIS=<host>. -rate is capped at 1000 with -load.
     -i-own-this

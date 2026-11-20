@@ -285,7 +285,13 @@ func runLoad(t *tester.Tester, cfg *domain.Config, results *domain.TestResults, 
 	}
 	urls := make([]string, 0, len(results.URLValidations))
 	for _, v := range results.URLValidations {
-		urls = append(urls, v.URL)
+		if v.IsValid {
+			urls = append(urls, v.URL)
+		}
+	}
+	if len(urls) == 0 {
+		logger.Warn("Load skipped: no crawled page responded 200-399")
+		return nil
 	}
 	duration, _ := time.ParseDuration(cfg.Load) // checked by Validate
 
