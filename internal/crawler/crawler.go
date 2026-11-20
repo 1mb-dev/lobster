@@ -94,8 +94,12 @@ func (c *Crawler) AddURL(rawURL string, depth int, urlQueue chan<- domain.URLTas
 	if !util.SameOrigin(c.baseURL, parsedURL) {
 		return domain.AddURLResult{Added: false, Reason: domain.AddURLInvalidHost}
 	}
+	// One spelling per page, for dedup. SameOrigin leaves a scheme change only
+	// for an http base on port 80 and an https link on 443.
 	if strings.EqualFold(parsedURL.Scheme, c.baseURL.Scheme) {
-		parsedURL.Host = c.baseURL.Host // one spelling per page, for dedup
+		parsedURL.Host = c.baseURL.Host
+	} else {
+		parsedURL.Host = strings.TrimSuffix(c.baseURL.Host, ":80")
 	}
 
 	// Clean URL (remove fragment; an empty path is the root, so the base URL
