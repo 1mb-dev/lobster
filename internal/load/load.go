@@ -170,10 +170,11 @@ func Run(ctx context.Context, cfg Config) (*domain.LoadResults, error) {
 	return r.results(cfg, window), nil
 }
 
-// acquire takes an in-flight slot, waiting for one until windowCtx ends, and
-// runs afterWait (if set) when it got one after waiting. It reports whether it
-// got one and, if it had to wait, when the slot came free (zero otherwise).
-func acquire(windowCtx context.Context, slots chan<- struct{}, afterWait func()) (got bool, freedAt time.Time) {
+// acquire takes an in-flight slot, waiting for one until windowCtx's deadline,
+// and runs afterWait (if set) when it got one after waiting. It reports
+// whether it got one and, if it had to wait, when the slot came free (zero
+// otherwise).
+func acquire(windowCtx context.Context, slots chan struct{}, afterWait func()) (got bool, freedAt time.Time) {
 	select {
 	case slots <- struct{}{}:
 		return true, time.Time{}
@@ -182,11 +183,15 @@ func acquire(windowCtx context.Context, slots chan<- struct{}, afterWait func())
 	select {
 	case slots <- struct{}{}:
 	case <-windowCtx.Done():
-	}
-	if windowCtx.Err() != nil {
 		return false, time.Time{}
 	}
 	freedAt = time.Now()
+	// The deadline's timer can fire late, and select picks at random when
+	// both cases are ready: a slot taken after the window is given back.
+	if end, _ := windowCtx.Deadline(); windowCtx.Err() != nil || !freedAt.Before(end) {
+		<-slots
+		return false, time.Time{}
+	}
 	if afterWait != nil {
 		afterWait()
 	}
