@@ -979,6 +979,8 @@ func TestMakeHTTPRequestWithRetry_429Backoff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create tester: %v", err)
 	}
+	limiter := &countingLimiter{RateLimiter: tester.rateLimiter}
+	tester.rateLimiter = limiter
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -992,6 +994,9 @@ func TestMakeHTTPRequestWithRetry_429Backoff(t *testing.T) {
 	// Verify retries happened
 	if atomic.LoadInt64(&requestCount) != 3 {
 		t.Errorf("Expected 3 requests (2 retries + 1 success), got %d", requestCount)
+	}
+	if waits := limiter.waits.Load(); waits != 3 {
+		t.Errorf("rate limiter waits = %d, want 3 (one per request)", waits)
 	}
 
 	// Verify status code is eventually 200
@@ -1009,6 +1014,17 @@ func TestMakeHTTPRequestWithRetry_429Backoff(t *testing.T) {
 			t.Errorf("Expected ~1s backoff between first two requests, got %v", timeBetween)
 		}
 	}
+}
+
+// countingLimiter counts Wait calls on the limiter it wraps.
+type countingLimiter struct {
+	domain.RateLimiter
+	waits atomic.Int64
+}
+
+func (l *countingLimiter) Wait(ctx context.Context) error {
+	l.waits.Add(1)
+	return l.RateLimiter.Wait(ctx)
 }
 
 // create429Server creates a test server that always returns HTTP 429.
@@ -1045,9 +1061,9 @@ func TestMakeHTTPRequestWithRetry_429MaxRetries(t *testing.T) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Should have made 5 attempts (initial + 4 retries) + 1 final request
-	if count := getCount(); count != 6 {
-		t.Errorf("Expected 6 requests (5 attempts + 1 final), got %d", count)
+	// The initial request and 4 retries; the last 429 is returned as is
+	if count := getCount(); count != 5 {
+		t.Errorf("Expected 5 requests (initial + 4 retries), got %d", count)
 	}
 
 	if resp.StatusCode != http.StatusTooManyRequests {

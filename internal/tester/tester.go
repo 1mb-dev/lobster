@@ -280,15 +280,10 @@ func (t *Tester) processURL(ctx context.Context, task domain.URLTask) {
 		return
 	}
 
-	// A wait or request the deadline cuts off touches no request counter.
-	if err := t.rateLimiter.Wait(ctx); err != nil {
-		atomic.AddInt64(&t.results.AbandonedRequests, 1)
-		return
-	}
-
 	// Make HTTP request with 429 retry logic
 	resp, responseTime, err := t.makeHTTPRequestWithRetry(ctx, task.URL)
 	if err != nil {
+		// A wait or request the deadline cuts off touches no request counter.
 		if ctx.Err() != nil {
 			atomic.AddInt64(&t.results.AbandonedRequests, 1)
 			return
@@ -367,6 +362,10 @@ func (t *Tester) makeHTTPRequestWithRetry(ctx context.Context, rawURL string) (*
 	backoff := initialBackoff
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		// Every attempt waits on the shared limiter, retries included.
+		if err := t.rateLimiter.Wait(ctx); err != nil {
+			return nil, lastRequestDuration, err
+		}
 		resp, duration, err := t.makeHTTPRequest(ctx, rawURL)
 		lastRequestDuration = duration
 
@@ -375,18 +374,12 @@ func (t *Tester) makeHTTPRequestWithRetry(ctx context.Context, rawURL string) (*
 			return nil, lastRequestDuration, err
 		}
 
-		if resp.StatusCode != http.StatusTooManyRequests {
+		if resp.StatusCode != http.StatusTooManyRequests || attempt == maxRetries {
 			return resp, lastRequestDuration, nil
 		}
 
 		// Close the 429 response body before retrying
 		_ = resp.Body.Close()
-
-		// If this was the last attempt, return the 429 response
-		if attempt == maxRetries {
-			// Re-make request one final time to return a valid response object
-			return t.makeHTTPRequest(ctx, rawURL)
-		}
 
 		// Log the backoff
 		t.logger.Info("Received 429 Too Many Requests, backing off",
@@ -447,14 +440,12 @@ func (t *Tester) applyAuthentication(req *http.Request) error {
 		// Basic authentication: username:password
 		if auth.Username != "" {
 			req.SetBasicAuth(auth.Username, auth.Password)
-			t.logger.Debug("Applied basic authentication")
 		}
 
 	case "bearer":
 		// Bearer token authentication
 		if auth.Token != "" {
 			req.Header.Set("Authorization", "Bearer "+auth.Token)
-			t.logger.Debug("Applied bearer token authentication")
 		}
 
 	case "cookie":
@@ -464,14 +455,12 @@ func (t *Tester) applyAuthentication(req *http.Request) error {
 				Name:  name,
 				Value: value,
 			})
-			t.logger.Debug("Applied cookie", "name", name)
 		}
 
 	case "header":
 		// Custom header-based authentication
 		for name, value := range auth.Headers {
 			req.Header.Set(name, value)
-			t.logger.Debug("Applied custom header", "name", name)
 		}
 
 	case "":

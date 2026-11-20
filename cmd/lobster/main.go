@@ -91,7 +91,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		cfg.UserAgent = userAgent(currentVersion())
 	}
 
-	if confirmErr := cli.ConfirmLowRate(stderr, cfg.Rate); confirmErr != nil {
+	if confirmErr := cli.ConfirmLowRate(stderr, os.Stdin, cfg.Rate); confirmErr != nil {
 		logger.Error("Run canceled", "error", confirmErr)
 		return exitError
 	}
