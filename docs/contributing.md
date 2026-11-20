@@ -40,9 +40,9 @@ Be respectful, inclusive, and professional in all interactions. We're building a
    cd lobster
    ```
 
-2. **Create a feature branch**
+2. **Create a branch** (`feat/*`, `fix/*` or `docs/*`)
    ```bash
-   git checkout -b feature/your-feature-name
+   git checkout -b feat/your-change
    ```
 
 3. **Make your changes**
@@ -59,12 +59,12 @@ Be respectful, inclusive, and professional in all interactions. We're building a
 
 5. **Commit your changes**
    ```bash
-   git commit -m "Add feature: description"
+   git commit -m "type(scope): description"
    ```
 
 6. **Push to your fork**
    ```bash
-   git push origin feature/your-feature-name
+   git push origin feat/your-change
    ```
 
 7. **Create a Pull Request**
@@ -89,24 +89,6 @@ Be respectful, inclusive, and professional in all interactions. We're building a
 - Test edge cases and error conditions
 - Use table-driven tests where appropriate
 
-### Architecture
-
-Lobster follows Clean Architecture:
-
-```
-internal/
-├── domain/     # Core entities and business logic
-├── crawler/    # URL discovery
-├── tester/     # Load testing engine
-├── reporter/   # Report generation
-├── validator/  # Performance validation
-└── config/     # Configuration management
-```
-
-- Keep domain logic independent
-- Use interfaces for dependencies
-- Avoid circular dependencies
-
 ### Commit Messages
 
 Follow conventional commits:
@@ -130,7 +112,6 @@ Types:
 
 Examples:
 ```
-feat(crawler): add support for JavaScript-rendered pages
 fix(tester): correct percentile calculation
 docs(readme): update installation instructions
 ```
@@ -168,6 +149,10 @@ lobster/
 
 Flow: crawler → tester → (load) → validator + reporter; `domain` holds the config and result types.
 
+- Keep domain logic independent
+- Use interfaces for dependencies
+- Avoid circular dependencies
+
 ## Getting Help
 
 - [GitHub Discussions](https://github.com/1mb-dev/lobster/discussions)
@@ -177,7 +162,6 @@ Flow: crawler → tester → (load) → validator + reporter; `domain` holds the
 ## Recognition
 
 Contributors will be recognized in:
-- README.md contributors section
 - Release notes for significant contributions
 - GitHub contributors page
 
