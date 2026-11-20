@@ -66,11 +66,11 @@ func (c *Crawler) ExtractLinks(body string, page *url.URL) []string {
 		if tt != html.StartTagToken && tt != html.SelfClosingTagToken {
 			continue
 		}
-		name, hasAttr := z.TagName()
-		if !hasAttr {
-			continue
-		}
+		name, _ := z.TagName()
 		switch string(name) {
+		case "noscript":
+			// lobster runs no scripts, so noscript content is markup
+			z.NextIsNotRawText()
 		case "a":
 			if href, ok := hrefOf(z); ok {
 				hrefs = append(hrefs, href)

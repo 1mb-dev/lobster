@@ -11,6 +11,11 @@ import (
 // page is the URL the bodies in these tests were served from.
 var page = &url.URL{Scheme: "http", Host: "example.com", Path: "/"}
 
+func extract(t *testing.T, c *Crawler, body string, page *url.URL) []string {
+	t.Helper()
+	return c.ExtractLinks(body, page)
+}
+
 func TestNew_Success(t *testing.T) {
 	c, err := New("http://example.com", 3)
 	if err != nil {
@@ -42,7 +47,7 @@ func TestExtractLinks_BasicHTML(t *testing.T) {
 		</body>
 	</html>`
 
-	links := c.ExtractLinks(html, page)
+	links := extract(t, c, html, page)
 
 	if len(links) != 3 {
 		t.Errorf("Expected 3 links, got %d", len(links))
@@ -65,7 +70,7 @@ func TestExtractLinks_DoubleQuotes(t *testing.T) {
 	c, _ := New("http://example.com", 3)
 
 	html := `<a href="http://example.com/double">Link</a>`
-	links := c.ExtractLinks(html, page)
+	links := extract(t, c, html, page)
 
 	if len(links) != 1 {
 		t.Fatalf("Expected 1 link, got %d", len(links))
@@ -79,7 +84,7 @@ func TestExtractLinks_SingleQuotes(t *testing.T) {
 	c, _ := New("http://example.com", 3)
 
 	html := `<a href='http://example.com/single'>Link</a>`
-	links := c.ExtractLinks(html, page)
+	links := extract(t, c, html, page)
 
 	if len(links) != 1 {
 		t.Fatalf("Expected 1 link, got %d", len(links))
@@ -93,7 +98,7 @@ func TestExtractLinks_HTMLEntities(t *testing.T) {
 	c, _ := New("http://example.com", 3)
 
 	html := `<a href="/path?param1=value&amp;param2=value">Link</a>`
-	links := c.ExtractLinks(html, page)
+	links := extract(t, c, html, page)
 
 	if len(links) != 1 {
 		t.Fatalf("Expected 1 link, got %d", len(links))
@@ -119,7 +124,7 @@ func TestExtractLinks_InvalidLinks(t *testing.T) {
 		</body>
 	</html>`
 
-	links := c.ExtractLinks(html, page)
+	links := extract(t, c, html, page)
 
 	if len(links) != 0 {
 		t.Errorf("Expected 0 valid links, got %d: %v", len(links), links)
@@ -143,7 +148,7 @@ func TestExtractLinks_AnchorsOnly(t *testing.T) {
 		<!-- <a href="/comment">k</a> -->
 		<script>var s = '<a href="/script">';</script>
 		<style>/* <a href="/style"> */</style>`
-	got := strings.Join(c.ExtractLinks(body, page), " ")
+	got := strings.Join(extract(t, c, body, page), " ")
 	want := "http://example.com/a http://example.com/b http://example.com/c http://example.com/d http://example.com/it's " +
 		"http://example.com/gt http://example.com/js http://example.com/x http://example.com/pricing " +
 		"http://example.com/q?a=1&b=2 http://example.com/self"
@@ -169,7 +174,27 @@ func TestExtractLinks_BaseHref(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := strings.Join(c.ExtractLinks(tt.body, docs), " "); got != tt.want {
+			if got := strings.Join(extract(t, c, tt.body, docs), " "); got != tt.want {
+				t.Errorf("links = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// lobster runs no scripts, so links inside <noscript> are followed, wherever
+// the noscript sits and whether or not it is closed.
+func TestExtractLinks_Noscript(t *testing.T) {
+	c, _ := New("http://example.com", 3)
+
+	tests := []struct{ name, body, want string }{
+		{"in body", `<noscript><a href="/nojs">x</a></noscript><a href="/after">y</a>`, "http://example.com/nojs http://example.com/after"},
+		{"in head", `<head><noscript><a href="/h"></noscript></head><body><a href="/after">`, "http://example.com/h http://example.com/after"},
+		{"unclosed", `<noscript><a href="/u"><p><a href="/after">`, "http://example.com/u http://example.com/after"},
+		{"script inside", `<noscript><script>'<a href="/s">'</script><a href="/n"></noscript>`, "http://example.com/n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := strings.Join(extract(t, c, tt.body, page), " "); got != tt.want {
 				t.Errorf("links = %q, want %q", got, tt.want)
 			}
 		})
