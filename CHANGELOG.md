@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `-rate` below 1 with stdin from `/dev/null` continues without the confirmation prompt instead of exiting 2
 - After the last retry of a 429, the 429 is reported without sending one more request
 - Debug logging no longer writes a line per request for the configured authentication
+- HTML report section headings no longer start with an emoji
 
 ## [2.1.0] - 2026-11-20
 
