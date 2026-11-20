@@ -53,7 +53,7 @@ func (c *Crawler) SetBaseFinalURL(final *url.URL) {
 // ExtractLinks returns the href of every <a> element in an HTML body, resolved
 // against the document's base URL: the first <base href>, itself resolved
 // against page, or page when there is none. page is the URL the body was
-// served from, after redirects.
+// served from, after redirects. Only http and https links are returned.
 func (c *Crawler) ExtractLinks(body string, page *url.URL) []string {
 	base, baseSet := page, false
 	var hrefs []string
@@ -85,24 +85,31 @@ func (c *Crawler) ExtractLinks(body string, page *url.URL) []string {
 		}
 	}
 
+	return c.resolve(hrefs, base)
+}
+
+// resolve returns the hrefs that lead to another page, as http or https URLs
+// resolved against base.
+func (c *Crawler) resolve(hrefs []string, base *url.URL) []string {
 	links := make([]string, 0, len(hrefs))
 	for _, href := range hrefs {
 		if !c.isValidLink(href) {
 			continue
 		}
-		if u, err := base.Parse(href); err == nil {
+		if u, err := base.Parse(href); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
 			links = append(links, u.String())
 		}
 	}
 	return links
 }
 
-// hrefOf returns the current tag's first href attribute, entity-decoded and trimmed.
+// hrefOf returns the current tag's first href attribute, entity-decoded, with
+// tabs and line breaks removed and spaces trimmed, as a browser reads it.
 func hrefOf(z *html.Tokenizer) (string, bool) {
 	for {
 		key, val, more := z.TagAttr()
 		if string(key) == "href" {
-			return strings.TrimSpace(string(val)), true
+			return strings.TrimSpace(stripTabsAndNewlines.Replace(string(val))), true
 		}
 		if !more {
 			return "", false
@@ -110,20 +117,16 @@ func hrefOf(z *html.Tokenizer) (string, bool) {
 	}
 }
 
-// isValidLink checks if a link should be followed
+var stripTabsAndNewlines = strings.NewReplacer("\t", "", "\n", "", "\r", "")
+
+// isValidLink reports whether an href can lead to another page: not empty,
+// not fragment-only, and with no scheme or an http or https one.
 func (c *Crawler) isValidLink(link string) bool {
-	if link == "" {
+	if link == "" || strings.HasPrefix(link, "#") {
 		return false
 	}
-
-	// Skip javascript:, mailto:, and fragment-only links
-	if strings.HasPrefix(link, "javascript:") ||
-		strings.HasPrefix(link, "mailto:") ||
-		strings.HasPrefix(link, "#") {
-		return false
-	}
-
-	return true
+	u, err := url.Parse(link)
+	return err == nil && (u.Scheme == "" || u.Scheme == "http" || u.Scheme == "https")
 }
 
 // AddURL adds a URL to the discovery queue if it's valid and not already discovered

@@ -201,6 +201,20 @@ func TestExtractLinks_Noscript(t *testing.T) {
 	}
 }
 
+// An href is read as a browser reads it: tabs and line breaks anywhere are
+// dropped, and only http and https links, in any case, are kept.
+func TestExtractLinks_HrefAsBrowserReads(t *testing.T) {
+	c, _ := New("http://example.com", 3)
+
+	body := "<a href=\"/docs/\ngetting-started\">a</a> <a href=\"/t\tab\">b</a> <a href=\"/c\r\nr\">c</a>" +
+		`<a href="JavaScript:void(0)">d</a> <a href="MAILTO:x@example.com">e</a> <a href="tel:+15550100">f</a>` +
+		"<a href=\"java\nscript:alert(1)\">g</a> <a href=\"data:text/html,x\">h</a> <a href=\"HTTP://example.com/up\">i</a>"
+	got := strings.Join(extract(t, c, body, page), " ")
+	if want := "http://example.com/docs/getting-started http://example.com/tab http://example.com/cr http://example.com/up"; got != want {
+		t.Errorf("links = %q,\nwant %q", got, want)
+	}
+}
+
 func TestIsValidLink(t *testing.T) {
 	c, _ := New("http://example.com", 3)
 
@@ -215,6 +229,10 @@ func TestIsValidLink(t *testing.T) {
 		{"javascript", "javascript:void(0)", false},
 		{"mailto", "mailto:test@example.com", false},
 		{"fragment only", "#section", false},
+		{"javascript, mixed case", "JavaScript:void(0)", false},
+		{"mailto, upper case", "MAILTO:test@example.com", false},
+		{"tel", "tel:+15550100", false},
+		{"http, upper case", "HTTP://example.com/page", true},
 		{"empty", "", false},
 	}
 
