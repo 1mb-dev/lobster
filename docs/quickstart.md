@@ -96,6 +96,8 @@ Against a public host, or one whose robots.txt sets a `Crawl-delay`, Lobster als
 
 The console shows the crawl's totals, success rate and response times (average, minimum, maximum, p95, p99), whether the crawl completed, a count of URLs per status code, the load phase if one ran, and one PASS or FAIL line per enabled target.
 
+Console output from a crawl of a local 21-page site at `-rate 20`:
+
 ```
 ============================================================
 RESULTS

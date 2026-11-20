@@ -85,7 +85,7 @@ Full reference: [Configuration Guide](https://1mb-dev.github.io/lobster/configur
 
 ## Reports
 
-Console output from a crawl of a local 21-page site:
+Console output from a crawl of a local 21-page site at `-rate 20`:
 
 ```
 ============================================================
