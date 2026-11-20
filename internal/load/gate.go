@@ -12,14 +12,15 @@ import (
 const AckEnv = "LOBSTER_I_OWN_THIS"
 
 // NeedsAck reports whether a load against a host needs the ownership
-// acknowledgement: the host resolves to any public address, or its robots.txt
-// declares a Crawl-delay. An unresolved host (no addresses) needs it too.
+// acknowledgement: the host resolves to any address util.IsPrivateAddr does
+// not cover, or its robots.txt declares a Crawl-delay. An unresolved host (no
+// addresses) needs it too.
 func NeedsAck(addrs []netip.Addr, crawlDelay time.Duration) bool {
 	if crawlDelay > 0 || len(addrs) == 0 {
 		return true
 	}
 	for _, a := range addrs {
-		if !util.IsBlockedAddr(a) {
+		if !util.IsPrivateAddr(a) {
 			return true
 		}
 	}

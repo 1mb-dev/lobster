@@ -59,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Redirects stay on the base URL's origin (or its http-to-https upgrade), at most 5, and robots.txt is checked again; a refused redirect of the base URL exits 2 and names the target
 - Crawled links follow the same origin rule as redirects; when the base page is served over https, a same-host http link on port 80 is fetched over https, and fails the run if it fails there; no link is fetched over http when it names https
 - robots.txt is fetched through the crawl's connection checks, and no proxy is used
-- A `-load` that needed no ownership acknowledgement can connect only to private addresses
+- A `-load` that needed no ownership acknowledgement can connect only to private addresses; NAT64, 6to4 and Teredo addresses count as public, there and in the gate
 - The `-auth-header` value no longer appears on the command line
 
 ## [2.0.2] - 2026-02-15

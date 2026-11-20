@@ -277,6 +277,9 @@ func TestNeedsAck(t *testing.T) {
 		{"private only", []netip.Addr{loopback}, 0, false},
 		{"private with Crawl-delay", []netip.Addr{loopback}, time.Second, true},
 		{"unresolved", nil, 0, true},
+		{"NAT64 of a public address", []netip.Addr{netip.MustParseAddr("64:ff9b::5db8:d822")}, 0, true},
+		{"6to4", []netip.Addr{netip.MustParseAddr("2002:5db8:d822::1")}, 0, true},
+		{"Teredo", []netip.Addr{netip.MustParseAddr("2001:0:4136:e378::1")}, 0, true},
 	}
 	for _, tt := range tests {
 		if got := NeedsAck(tt.addrs, tt.delay); got != tt.want {

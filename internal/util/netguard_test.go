@@ -74,7 +74,11 @@ func TestDialControl(t *testing.T) {
 func TestPrivateOnlyDialControl(t *testing.T) {
 	control := PrivateOnlyDialControl()
 	var public *PublicAddressError
-	for _, addr := range []string{"93.184.216.34:80", "[2606:4700:4700::1111]:443", "[::ffff:8.8.8.8]:80"} {
+	for _, addr := range []string{
+		"93.184.216.34:80", "[2606:4700:4700::1111]:443", "[::ffff:8.8.8.8]:80",
+		// NAT64, local-use NAT64, 6to4 and Teredo: a gateway or relay may reach a public host.
+		"[64:ff9b::5db8:d822]:80", "[64:ff9b:1::1]:80", "[2002:5db8:d822::1]:80", "[2001:0:4136:e378::1]:80",
+	} {
 		if err := control("tcp", addr, nil); !errors.As(err, &public) {
 			t.Errorf("PrivateOnlyDialControl(%s) = %v, want a PublicAddressError", addr, err)
 		}

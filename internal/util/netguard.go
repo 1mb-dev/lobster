@@ -20,10 +20,6 @@ var blockedPrefixes = func() []netip.Prefix {
 		"198.51.100.0/24", // TEST-NET-2
 		"203.0.113.0/24",  // TEST-NET-3
 		"240.0.0.0/4",     // reserved, broadcast
-		"64:ff9b::/96",    // NAT64: embeds any IPv4 address, private ones included
-		"64:ff9b:1::/48",  // local-use NAT64
-		"2002::/16",       // 6to4: embeds any IPv4 address
-		"2001::/32",       // Teredo: embeds an IPv4 address
 		"2001:db8::/32",   // documentation
 		"100::/64",        // discard-only
 		"::/96",           // IPv4-compatible (deprecated): embeds an IPv4 address
@@ -35,6 +31,16 @@ var blockedPrefixes = func() []netip.Prefix {
 	return prefixes
 }()
 
+// translatedPrefixes embed an IPv4 address that a gateway or relay connects
+// to. It may be private, so IsBlockedAddr blocks them; it may be public, so
+// IsPrivateAddr does not count them as private.
+var translatedPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("64:ff9b::/96"),   // NAT64
+	netip.MustParsePrefix("64:ff9b:1::/48"), // local-use NAT64
+	netip.MustParsePrefix("2002::/16"),      // 6to4
+	netip.MustParsePrefix("2001::/32"),      // Teredo
+}
+
 // IsBlockedAddr reports whether addr is loopback, private, link-local,
 // multicast, unspecified or in a special-purpose range. IPv4-mapped IPv6
 // addresses are judged as their IPv4 address.
@@ -45,7 +51,18 @@ func IsBlockedAddr(addr netip.Addr) bool {
 		addr.IsInterfaceLocalMulticast() || addr.IsMulticast() {
 		return true
 	}
-	for _, p := range blockedPrefixes {
+	return inPrefixes(addr, blockedPrefixes) || inPrefixes(addr, translatedPrefixes)
+}
+
+// IsPrivateAddr reports whether addr reaches only a private or reserved host:
+// IsBlockedAddr covers it and it is not in a translated (NAT64, 6to4,
+// Teredo) range. The load's ownership gate and private-only dial use it.
+func IsPrivateAddr(addr netip.Addr) bool {
+	return IsBlockedAddr(addr) && !inPrefixes(addr.Unmap(), translatedPrefixes)
+}
+
+func inPrefixes(addr netip.Addr, prefixes []netip.Prefix) bool {
+	for _, p := range prefixes {
 		if p.Contains(addr) {
 			return true
 		}
@@ -102,7 +119,7 @@ func (e *PublicAddressError) Error() string {
 }
 
 // PrivateOnlyDialControl returns a net.Dialer Control function that refuses
-// every address IsBlockedAddr does not cover. A load that needed no ownership
+// every address IsPrivateAddr does not cover. A load that needed no ownership
 // acknowledgement uses it, so a host that resolves to a public address later
 // (DNS rebinding) is refused at dial time.
 func PrivateOnlyDialControl() func(network, address string, c syscall.RawConn) error {
@@ -115,7 +132,7 @@ func PrivateOnlyDialControl() func(network, address string, c syscall.RawConn) e
 		if err != nil {
 			return fmt.Errorf("dial address %q: %w", address, err)
 		}
-		if !IsBlockedAddr(addr) {
+		if !IsPrivateAddr(addr) {
 			return &PublicAddressError{Addr: addr.Unmap()}
 		}
 		return nil
