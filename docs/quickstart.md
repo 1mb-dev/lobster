@@ -5,9 +5,13 @@ nav_order: 2
 
 # Quick Start Guide
 
-Get up and running with Lobster in 5 minutes.
-
 ## Installation
+
+### Using Go Install
+
+```bash
+go install github.com/1mb-dev/lobster/v2/cmd/lobster@latest
+```
 
 ### From Source
 
@@ -15,12 +19,6 @@ Get up and running with Lobster in 5 minutes.
 git clone https://github.com/1mb-dev/lobster.git
 cd lobster
 go build -o lobster ./cmd/lobster
-```
-
-### Using Go Install
-
-```bash
-go install github.com/1mb-dev/lobster/v2/cmd/lobster@latest
 ```
 
 ## Basic Usage
@@ -158,9 +156,4 @@ See [Configuration](configuration) for all authentication options.
 
 - [Configuration Reference](configuration) - All CLI flags and options
 - [Responsible Use](responsible-use) - Only test systems you own
-- [Contributing](contributing) - How to contribute
-
-## Getting Help
-
-- [GitHub Discussions](https://github.com/1mb-dev/lobster/discussions)
-- [Report Issues](https://github.com/1mb-dev/lobster/issues)
+- [Issues](https://github.com/1mb-dev/lobster/issues) - Report a problem
