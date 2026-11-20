@@ -195,7 +195,7 @@ type LoadResults struct {
 	TargetRate float64 `json:"target_rate"`
 	// AchievedRate is requests sent divided by Duration.
 	AchievedRate float64 `json:"achieved_rate"`
-	// SuccessRate is the percentage of sent requests that got a 200-399 status.
+	// SuccessRate is the percentage of finished requests (successful plus failed) that got a 200-399 status.
 	SuccessRate float64 `json:"success_rate"`
 	// Sent counts requests sent.
 	Sent int64 `json:"requests_sent"`

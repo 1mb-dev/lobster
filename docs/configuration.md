@@ -39,7 +39,7 @@ lobster -config config.json -concurrency 20
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `-load` | duration | none | After a complete crawl, replay the crawled URLs at `-rate` for this long |
+| `-load` | duration | none | After a complete crawl, replay the crawled pages that responded 200-399 at `-rate` for this long |
 | `-i-own-this` | bool | false | Confirm you own the `-load` target; also needs `LOBSTER_I_OWN_THIS=<host>` |
 
 ### Safety

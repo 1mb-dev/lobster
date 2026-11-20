@@ -16,7 +16,7 @@ func RegisterConfigFlags(fs *flag.FlagSet) *ConfigOptions {
 	fs.StringVar(&o.BaseURL, "url", "", "Base URL to test")
 	fs.IntVar(&o.Concurrency, "concurrency", 0, "Number of concurrent workers")
 	fs.StringVar(&o.Duration, "duration", "", "Time limit for the crawl (e.g., 30s, 5m, 1h)")
-	fs.StringVar(&o.Load, "load", "", "After a complete crawl, replay the crawled URLs at -rate for this long")
+	fs.StringVar(&o.Load, "load", "", "After a complete crawl, replay the crawled pages that responded 200-399 at -rate for this long")
 	fs.StringVar(&o.Timeout, "timeout", "", "Request timeout")
 	fs.Float64Var(&o.Rate, "rate", 0, "Requests per second, shared by all workers")
 	fs.StringVar(&o.UserAgent, "user-agent", "", "User agent string")

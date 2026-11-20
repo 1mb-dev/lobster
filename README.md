@@ -49,7 +49,7 @@ lobster -url https://example.com
 
 Lobster prints a summary when the run ends. Add `-output results.json` for JSON, `-html report.html` for an HTML report.
 
-Crawl, then replay the pages found at 50 req/s for 30 seconds:
+Crawl, then replay the pages that responded 200-399 at 50 req/s for 30 seconds:
 
 ```bash
 lobster -url http://localhost:3000 -allow-private-ips -rate 50 -load 30s
@@ -80,7 +80,7 @@ Full reference: [Configuration Guide](https://1mb-dev.github.io/lobster/configur
 ## How It Works
 
 1. **Crawl.** Starting at the base URL, Lobster follows same-host `<a href>` links up to `-max-depth` and fetches each page once, at most `-rate` requests per second. It skips pages robots.txt disallows and runs no JavaScript. The crawl ends when every page has been fetched; `-duration` is its time limit. A crawl cut short by `-duration` or a full queue is incomplete, and the run fails.
-2. **Load (optional).** With `-load 30s`, after a complete crawl, Lobster sends one request every `1/-rate` seconds to the crawled pages in turn. Requests go out on schedule however slowly the server responds, so a slow server shows in the latency rather than lowering the rate. A public host needs an ownership acknowledgement; see [Configuration](https://1mb-dev.github.io/lobster/configuration#load-phase).
+2. **Load (optional).** With `-load 30s`, after a complete crawl, Lobster sends one request every `1/-rate` seconds to the crawled pages that responded 200-399, in turn. Requests go out on schedule however slowly the server responds, so a slow server shows in the latency rather than lowering the rate. A public host needs an ownership acknowledgement; see [Configuration](https://1mb-dev.github.io/lobster/configuration#load-phase).
 3. **Verdict.** Each enabled target gets a PASS or FAIL line. Only the success-rate target (99%) is on by default. Exit code 0 means every target passed and the crawl completed; 1 means a target failed, the crawl was incomplete, or the load aborted or left requests unsent; 2 means a usage, configuration or safety refusal.
 
 ## Reports
