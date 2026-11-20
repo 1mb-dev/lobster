@@ -196,13 +196,13 @@ type LoadResults struct {
 	TargetRate float64 `json:"target_rate"`
 	// AchievedRate is requests sent divided by Duration.
 	AchievedRate float64 `json:"achieved_rate"`
-	// SuccessRate is the percentage of finished requests (successful plus failed) that got a 200-399 status.
+	// SuccessRate is Successful as a percentage of Successful plus Failed.
 	SuccessRate float64 `json:"success_rate"`
 	// Sent counts requests sent.
 	Sent int64 `json:"requests_sent"`
-	// Successful counts requests that got a 200-399 status.
+	// Successful counts requests that got a 200-399 status and whose body (up to 1MB) was read within -timeout.
 	Successful int64 `json:"successful_requests"`
-	// Failed counts requests with a transport error or a status outside 200-399.
+	// Failed counts requests with a transport error, a body cut off or not read within -timeout, or a status outside 200-399.
 	Failed int64 `json:"failed_requests"`
 	// Late counts requests that waited for an in-flight slot, and those after such a request due before its slot came free.
 	Late int64 `json:"late"`
