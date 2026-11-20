@@ -49,8 +49,8 @@ func TestLoadConfiguration_Flags(t *testing.T) {
 		wantErr string
 		check   func(*domain.Config) bool
 	}{
-		{name: "rate 0 refused", args: []string{"-rate", "0"}, wantErr: "MinRate"},
-		{name: "rate below MinRate refused", args: []string{"-rate", "0.05"}, wantErr: "MinRate"},
+		{name: "rate 0 refused", args: []string{"-rate", "0"}, wantErr: "rate must be at least 0.1 req/s"},
+		{name: "rate below MinRate refused", args: []string{"-rate", "0.05"}, wantErr: "rate must be at least 0.1 req/s"},
 		{name: "rate at MinRate accepted", args: []string{"-rate", "0.1"}, check: func(c *domain.Config) bool { return c.Rate == domain.MinRate }},
 		{name: "concurrency 0 refused", args: []string{"-concurrency", "0"}, wantErr: "concurrency"},
 		{name: "duration 0 refused", args: []string{"-duration", "0s"}, wantErr: "duration"},
@@ -118,7 +118,7 @@ func TestLoadConfiguration_FileErrors(t *testing.T) {
 	}{
 		{name: "missing file", path: "/nonexistent/path/config.json", wantErr: "cannot read"},
 		{name: "unknown key", path: writeConfig(t, `{"concurency": 5}`), wantErr: "concurency"},
-		{name: "rate 0 in file", path: writeConfig(t, `{"rate": 0}`), wantErr: "MinRate"},
+		{name: "rate 0 in file", path: writeConfig(t, `{"rate": 0}`), wantErr: "rate must be at least 0.1 req/s"},
 		{name: "negative target", path: writeConfig(t, `{"performance_targets": {"success_rate": -1}}`), wantErr: "success_rate"},
 		{name: "removed error_rate target", path: writeConfig(t, `{"performance_targets": {"error_rate": 1}}`), wantErr: "error_rate"},
 		{name: "removed follow_links key", path: writeConfig(t, `{"follow_links": true}`), wantErr: "follow_links"},

@@ -61,11 +61,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return exitError
 	}
 
-	logLevel := slog.LevelInfo
+	var logLevel slog.LevelVar
 	if opts.Verbose {
-		logLevel = slog.LevelDebug
+		logLevel.Set(slog.LevelDebug)
 	}
-	logger := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: logLevel}))
+	logger := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: &logLevel}))
 
 	if *showVersion {
 		fmt.Fprintf(stdout, "Lobster %s\n", displayVersion(currentVersion()))
@@ -82,6 +82,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 			"error", err,
 			"hint", "Check your config file syntax or command-line flags")
 		return exitError
+	}
+	if cfg.Verbose {
+		logLevel.Set(slog.LevelDebug)
 	}
 
 	if cfg.UserAgent == "" {

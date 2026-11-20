@@ -109,17 +109,17 @@ func TestConfig_Validate_Invalid(t *testing.T) {
 		{
 			name:    "negative rate",
 			modify:  func(c *Config) { c.Rate = -1.0 },
-			wantErr: "MinRate",
+			wantErr: "rate must be at least 0.1 req/s",
 		},
 		{
 			name:    "zero rate",
 			modify:  func(c *Config) { c.Rate = 0 },
-			wantErr: "MinRate",
+			wantErr: "rate must be at least 0.1 req/s",
 		},
 		{
 			name:    "rate below MinRate",
 			modify:  func(c *Config) { c.Rate = 0.05 },
-			wantErr: "MinRate",
+			wantErr: "rate must be at least 0.1 req/s",
 		},
 		{
 			name:    "zero duration",

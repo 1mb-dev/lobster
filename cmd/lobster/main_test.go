@@ -333,3 +333,12 @@ func TestRun_LoadReplaysOnlyPagesThatResponded(t *testing.T) {
 		t.Errorf("/gone requested %d times; want once, by the crawl", n)
 	}
 }
+
+func TestRun_VerboseFromConfigFile(t *testing.T) {
+	config := writeFile(t, "c.json", `{"verbose": true}`)
+	var stdout, stderr bytes.Buffer
+	run(local(testSite(t), "-config", config), &stdout, &stderr)
+	if !strings.Contains(stderr.String(), `"level":"DEBUG"`) {
+		t.Errorf("\"verbose\": true in the config file logged no debug lines:\n%s", stderr.String())
+	}
+}

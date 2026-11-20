@@ -136,7 +136,7 @@ func (c *Config) Validate() error {
 	}
 
 	if c.Rate < MinRate {
-		return fmt.Errorf("rate must be at least MinRate (%.1f req/s), got %g", MinRate, c.Rate)
+		return fmt.Errorf("rate must be at least %.1f req/s, got %g", MinRate, c.Rate)
 	}
 
 	if err := positiveDuration("duration", c.Duration); err != nil {
