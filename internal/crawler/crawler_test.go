@@ -323,22 +323,34 @@ func TestGetDroppedCount(t *testing.T) {
 	}
 }
 
+// A link is queued on the base origin or its http to https upgrade; on an
+// https base, an http link on port 80 is queued as https. want is the queued
+// URL, empty when the link is refused.
 func TestAddURL_SchemeDowngrade(t *testing.T) {
 	tests := []struct {
-		name, base, link string
-		want             bool
+		name, base, link, want string
 	}{
-		{"https base, http link", "https://example.com", "http://example.com/x", false},
-		{"http base, https link", "http://example.com", "https://example.com/x", true},
-		{"same scheme", "https://example.com", "https://example.com/x", true},
-		{"upgrade on a custom port", "http://example.com:8080", "https://example.com:8080/x", false},
+		{"https base, http link", "https://example.com", "http://example.com/x", "https://example.com/x"},
+		{"https base, http link on port 80", "https://example.com", "http://example.com:80/x", "https://example.com/x"},
+		{"https base, http link on another port", "https://example.com", "http://example.com:8080/x", ""},
+		{"https base on another port, http link", "https://example.com:8443", "http://example.com/x", ""},
+		{"http base, https link", "http://example.com", "https://example.com/x", "https://example.com/x"},
+		{"http base, https link on port 443", "http://example.com", "https://example.com:443/x", "https://example.com:443/x"},
+		{"same scheme", "https://example.com", "https://example.com/x", "https://example.com/x"},
+		{"same scheme, default port spelled out", "https://example.com", "https://EXAMPLE.com:443/x", "https://example.com/x"},
+		{"upgrade on a custom port", "http://example.com:8080", "https://example.com:8080/x", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, _ := New(tt.base, 3)
-			got := c.AddURL(tt.link, 1, make(chan domain.URLTask, 1)).Added
+			queue := make(chan domain.URLTask, 1)
+			res := c.AddURL(tt.link, 1, queue)
+			got := ""
+			if res.Added {
+				got = (<-queue).URL
+			}
 			if got != tt.want {
-				t.Errorf("AddURL(%s) on %s = %v, want %v", tt.link, tt.base, got, tt.want)
+				t.Errorf("AddURL(%s) on %s queued %q, want %q", tt.link, tt.base, got, tt.want)
 			}
 		})
 	}

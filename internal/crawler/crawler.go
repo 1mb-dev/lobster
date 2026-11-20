@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
+	"github.com/1mb-dev/lobster/v2/internal/util"
 )
 
 // Crawler handles URL discovery and link extraction
@@ -84,9 +85,17 @@ func (c *Crawler) AddURL(rawURL string, depth int, urlQueue chan<- domain.URLTas
 		parsedURL = c.baseURL.ResolveReference(parsedURL)
 	}
 
-	// Only process URLs from the same host
-	if parsedURL.Host != c.baseURL.Host || !c.schemeAllowed(parsedURL) {
+	// On an https base, an http link on port 80 is fetched over https: a
+	// downgrade would send the run's credentials in plaintext.
+	if strings.EqualFold(c.baseURL.Scheme, "https") && strings.EqualFold(parsedURL.Scheme, "http") && util.PortOf(parsedURL) == "80" {
+		parsedURL.Scheme = "https"
+		parsedURL.Host = strings.TrimSuffix(parsedURL.Host, ":80")
+	}
+	if !util.SameOrigin(c.baseURL, parsedURL) {
 		return domain.AddURLResult{Added: false, Reason: domain.AddURLInvalidHost}
+	}
+	if strings.EqualFold(parsedURL.Scheme, c.baseURL.Scheme) {
+		parsedURL.Host = c.baseURL.Host // one spelling per page, for dedup
 	}
 
 	// Clean URL (remove fragment; an empty path is the root, so the base URL
@@ -120,15 +129,6 @@ func (c *Crawler) AddURL(rawURL string, depth int, urlQueue chan<- domain.URLTas
 		c.droppedCnt.Add(1)
 		return domain.AddURLResult{Added: false, Reason: domain.AddURLQueueFull}
 	}
-}
-
-// schemeAllowed accepts the base scheme, or the http to https upgrade on
-// default ports; a downgrade would send the run's credentials in plaintext.
-func (c *Crawler) schemeAllowed(u *url.URL) bool {
-	if strings.EqualFold(u.Scheme, c.baseURL.Scheme) {
-		return true
-	}
-	return strings.EqualFold(c.baseURL.Scheme, "http") && strings.EqualFold(u.Scheme, "https") && u.Port() == ""
 }
 
 // GetDiscoveredCount returns the number of discovered URLs (O(1) operation)
