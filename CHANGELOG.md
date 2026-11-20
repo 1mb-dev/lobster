@@ -54,7 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Only `<a href>` links are followed, quoted or not; an `href` on any other tag, such as `<link>` or `<area>`, or inside a comment or `<script>`, is no longer crawled
+- Only `<a href>` links are followed, quoted or not; an `href` on any other tag, such as `<link>` or `<area>`, or inside a comment or `<script>`, is no longer crawled; an `<a href>` inside `<noscript>` is followed
 - Relative links resolve against the page's `<base href>`, or the page they were found on after redirects
 - Links are read from the first 10MB of a page, not the first 64KB
 - A page whose body is cut off before its links are read makes the crawl incomplete; the links read before the cut are followed
