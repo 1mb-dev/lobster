@@ -49,11 +49,11 @@ lobster -url http://localhost:3000 -allow-private-ips -rate 50 -load 30s
 ```bash
 # Basic authentication
 export LOBSTER_AUTH_PASSWORD="secret"
-lobster -url https://api.example.com -auth-type basic -auth-username admin
+lobster -url https://www.example.com -auth-type basic -auth-username admin
 
 # Bearer token
 export LOBSTER_AUTH_TOKEN="your-api-token"
-lobster -url https://api.example.com -auth-type bearer
+lobster -url https://www.example.com -auth-type bearer
 ```
 
 For more examples, see the [Quick Start Guide](https://1mb-dev.github.io/lobster/quickstart).
