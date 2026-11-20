@@ -26,7 +26,7 @@ import (
 // Exit codes.
 const (
 	exitPass  = 0 // every enabled gate passed
-	exitFail  = 1 // a target failed or the crawl was incomplete
+	exitFail  = 1 // a target failed, the crawl was incomplete, or the load aborted or left requests unsent
 	exitError = 2 // usage, configuration, refused base URL, or runtime error
 )
 
