@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Only `<a href>` links are followed; an `href` on any other tag, such as `<link>`, `<base>` or `<area>`, is no longer crawled
+- Relative links resolve against the page they were found on, after redirects
 
 ### Security
 
