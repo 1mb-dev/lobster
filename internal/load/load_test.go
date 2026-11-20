@@ -273,6 +273,16 @@ func TestRun_AbortsOnBodyReadErrors(t *testing.T) {
 	}
 }
 
+// send reads at most 1MB of a body; a longer body is not an error.
+func TestSend_BodyOver1MBIsNotAnError(t *testing.T) {
+	client, url := runAgainst(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(make([]byte, 1<<20+1))
+	}, 1, time.Second)
+	if got := send(context.Background(), config(client, url, 1, time.Second), url); got != http.StatusOK {
+		t.Errorf("send = %d, want %d", got, http.StatusOK)
+	}
+}
+
 // A transport error (status 0) counts toward the stop like a 429 or 5xx; a
 // 200-399 or another 4xx resets the count.
 func TestRecord_ConnectionErrorsCountTowardAbort(t *testing.T) {
