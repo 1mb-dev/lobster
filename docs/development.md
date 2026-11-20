@@ -90,6 +90,8 @@ Response times go into a fixed histogram of 224 log buckets (8 per octave), so m
 
 **goflow** (v1.6.0): token bucket rate limiting for the crawl (`internal/tester`).
 
+**golang.org/x/net** (v0.62.0): `html.Tokenizer` for link extraction (`internal/crawler`).
+
 ## Common Tasks
 
 ### Adding a Flag

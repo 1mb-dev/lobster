@@ -1,13 +1,17 @@
 // Package domain defines core domain types and interfaces for the load testing tool.
 package domain
 
-import "context"
+import (
+	"context"
+	"net/url"
+)
 
 // URLCrawler defines the interface for URL discovery and link extraction.
 // Implementations handle URL validation, deduplication, and queue management.
 type URLCrawler interface {
-	// ExtractLinks parses HTML body and returns valid links found.
-	ExtractLinks(body string) []string
+	// ExtractLinks returns the links in an HTML body served from page,
+	// resolved against the body's <base href> or page.
+	ExtractLinks(body string, page *url.URL) []string
 
 	// AddURL adds a URL to the discovery queue if valid and not already discovered.
 	// Returns an AddURLResult with the outcome and reason.

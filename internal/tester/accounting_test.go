@@ -15,10 +15,12 @@ import (
 
 // site serves HTML pages from a path→links map; unknown paths get 404.
 // robots, when non-empty, is served at /robots.txt; redirects maps a path to
-// its 301 target. hits counts page requests.
+// its 301 target; bases maps a path to its <base href>. hits counts page
+// requests.
 type site struct {
 	pages     map[string][]string
 	redirects map[string]string
+	bases     map[string]string
 	robots    string
 	delay     time.Duration
 
@@ -49,6 +51,9 @@ func (s *site) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	time.Sleep(s.delay)
 	w.Header().Set("Content-Type", "text/html")
+	if base := s.bases[r.URL.Path]; base != "" {
+		_, _ = fmt.Fprintf(w, `<base href="%s">`, base)
+	}
 	for _, l := range links {
 		_, _ = fmt.Fprintf(w, `<a href="%s">x</a>`, l)
 	}
@@ -112,22 +117,26 @@ func TestAccounting_BaseURLFetchedOnce(t *testing.T) {
 	}
 }
 
-// A relative link resolves against the page it was found on, after redirects.
+// A relative link resolves against the page's <base href>, or the page it was
+// found on, after redirects.
 func TestCrawl_RelativeLinkResolvesAgainstPage(t *testing.T) {
 	s := &site{
 		pages: map[string][]string{
-			"/":                 {"/docs/index.html", "/guide"},
+			"/":                 {"/docs/index.html", "/guide", "/docs/x"},
+			"/docs/x":           {"about"},
+			"/about":            nil,
 			"/docs/index.html":  {"intro.html"},
 			"/docs/intro.html":  nil,
 			"/guide/":           {"start.html"},
 			"/guide/start.html": nil,
 		},
 		redirects: map[string]string{"/guide": "/guide/"},
+		bases:     map[string]string{"/docs/x": "/"},
 	}
 	r := crawl(t, s, "/", 10*time.Second, nil)
 
 	_, hits := s.pageHits()
-	for _, p := range []string{"/docs/intro.html", "/guide/start.html"} {
+	for _, p := range []string{"/docs/intro.html", "/guide/start.html", "/about"} {
 		if hits[p] != 1 {
 			t.Errorf("%s fetched %d times, want 1 (pages fetched: %v)", p, hits[p], hits)
 		}

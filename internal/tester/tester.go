@@ -537,15 +537,8 @@ func (t *Tester) discoverLinksFromResponse(resp *http.Response, task domain.URLT
 		return 0
 	}
 
-	// Extract and queue links; a relative link resolves against the page it
-	// was found on, after redirects.
-	links := t.crawler.ExtractLinks(string(body))
+	links := t.crawler.ExtractLinks(string(body), resp.Request.URL)
 	for _, link := range links {
-		if resp.Request != nil {
-			if ref, err := resp.Request.URL.Parse(link); err == nil {
-				link = ref.String()
-			}
-		}
 		if t.enqueue(link, task.Depth+1) {
 			atomic.StoreInt64(&t.results.URLsDiscovered, int64(t.crawler.GetDiscoveredCount()))
 		}

@@ -2,12 +2,12 @@
 package crawler
 
 import (
-	"html"
 	"net/url"
-	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"golang.org/x/net/html"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
 	"github.com/1mb-dev/lobster/v2/internal/util"
@@ -17,7 +17,6 @@ import (
 type Crawler struct {
 	discoveredURLs sync.Map
 	baseURL        *url.URL
-	urlPattern     *regexp.Regexp
 	maxDepth       int
 	discoveredCnt  atomic.Int64 // O(1) counter for discovered URLs
 	droppedCnt     atomic.Int64 // Counter for URLs dropped due to queue full
@@ -31,27 +30,69 @@ func New(baseURL string, maxDepth int) (*Crawler, error) {
 	}
 
 	return &Crawler{
-		baseURL:    parsedURL,
-		urlPattern: regexp.MustCompile(`(?i)<a\s+(?:[^>]*?\s)?href\s*=\s*(?:"([^"]*)"|'([^']*)')`),
-		maxDepth:   maxDepth,
+		baseURL:  parsedURL,
+		maxDepth: maxDepth,
 	}, nil
 }
 
-// ExtractLinks extracts the href of every <a> element in an HTML body
-func (c *Crawler) ExtractLinks(body string) []string {
-	matches := c.urlPattern.FindAllStringSubmatch(body, -1)
-	links := make([]string, 0, len(matches))
-
-	for _, match := range matches {
-		link := strings.TrimSpace(match[1] + match[2]) // one quote style matched
-		if c.isValidLink(link) {
-			// Decode HTML entities (e.g., &amp; -> &, &quot; -> ")
-			decodedLink := html.UnescapeString(link)
-			links = append(links, decodedLink)
+// ExtractLinks returns the href of every <a> element in an HTML body, resolved
+// against the document's base URL: the first <base href>, itself resolved
+// against page, or page when there is none. page is the URL the body was
+// served from, after redirects.
+func (c *Crawler) ExtractLinks(body string, page *url.URL) []string {
+	base, baseSet := page, false
+	var hrefs []string
+	z := html.NewTokenizer(strings.NewReader(body))
+	for {
+		tt := z.Next()
+		if tt == html.ErrorToken {
+			break
+		}
+		if tt != html.StartTagToken && tt != html.SelfClosingTagToken {
+			continue
+		}
+		name, hasAttr := z.TagName()
+		if !hasAttr {
+			continue
+		}
+		switch string(name) {
+		case "a":
+			if href, ok := hrefOf(z); ok {
+				hrefs = append(hrefs, href)
+			}
+		case "base":
+			if href, ok := hrefOf(z); ok && !baseSet {
+				baseSet = true
+				if u, err := page.Parse(href); err == nil {
+					base = u
+				}
+			}
 		}
 	}
 
+	links := make([]string, 0, len(hrefs))
+	for _, href := range hrefs {
+		if !c.isValidLink(href) {
+			continue
+		}
+		if u, err := base.Parse(href); err == nil {
+			links = append(links, u.String())
+		}
+	}
 	return links
+}
+
+// hrefOf returns the current tag's first href attribute, entity-decoded and trimmed.
+func hrefOf(z *html.Tokenizer) (string, bool) {
+	for {
+		key, val, more := z.TagAttr()
+		if string(key) == "href" {
+			return strings.TrimSpace(string(val)), true
+		}
+		if !more {
+			return "", false
+		}
+	}
 }
 
 // isValidLink checks if a link should be followed

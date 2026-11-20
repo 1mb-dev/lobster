@@ -1,11 +1,15 @@
 package crawler
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
 )
+
+// page is the URL the bodies in these tests were served from.
+var page = &url.URL{Scheme: "http", Host: "example.com", Path: "/"}
 
 func TestNew_Success(t *testing.T) {
 	c, err := New("http://example.com", 3)
@@ -38,15 +42,15 @@ func TestExtractLinks_BasicHTML(t *testing.T) {
 		</body>
 	</html>`
 
-	links := c.ExtractLinks(html)
+	links := c.ExtractLinks(html, page)
 
 	if len(links) != 3 {
 		t.Errorf("Expected 3 links, got %d", len(links))
 	}
 
 	expectedLinks := map[string]bool{
-		"/page1":                   true,
-		"/page2":                   true,
+		"http://example.com/page1": true,
+		"http://example.com/page2": true,
 		"http://example.com/page3": true,
 	}
 
@@ -61,7 +65,7 @@ func TestExtractLinks_DoubleQuotes(t *testing.T) {
 	c, _ := New("http://example.com", 3)
 
 	html := `<a href="http://example.com/double">Link</a>`
-	links := c.ExtractLinks(html)
+	links := c.ExtractLinks(html, page)
 
 	if len(links) != 1 {
 		t.Fatalf("Expected 1 link, got %d", len(links))
@@ -75,7 +79,7 @@ func TestExtractLinks_SingleQuotes(t *testing.T) {
 	c, _ := New("http://example.com", 3)
 
 	html := `<a href='http://example.com/single'>Link</a>`
-	links := c.ExtractLinks(html)
+	links := c.ExtractLinks(html, page)
 
 	if len(links) != 1 {
 		t.Fatalf("Expected 1 link, got %d", len(links))
@@ -89,14 +93,14 @@ func TestExtractLinks_HTMLEntities(t *testing.T) {
 	c, _ := New("http://example.com", 3)
 
 	html := `<a href="/path?param1=value&amp;param2=value">Link</a>`
-	links := c.ExtractLinks(html)
+	links := c.ExtractLinks(html, page)
 
 	if len(links) != 1 {
 		t.Fatalf("Expected 1 link, got %d", len(links))
 	}
 
 	// Should decode &amp; to &
-	expected := "/path?param1=value&param2=value"
+	expected := "http://example.com/path?param1=value&param2=value"
 	if links[0] != expected {
 		t.Errorf("Expected '%s', got '%s'", expected, links[0])
 	}
@@ -115,26 +119,60 @@ func TestExtractLinks_InvalidLinks(t *testing.T) {
 		</body>
 	</html>`
 
-	links := c.ExtractLinks(html)
+	links := c.ExtractLinks(html, page)
 
 	if len(links) != 0 {
 		t.Errorf("Expected 0 valid links, got %d: %v", len(links), links)
 	}
 }
 
-// Only <a> elements are followed, whatever their other attributes, quotes or case.
+// Only <a> elements are followed, whatever their other attributes, quotes or
+// case; nothing in a comment, script or style is a link.
 func TestExtractLinks_AnchorsOnly(t *testing.T) {
 	c, _ := New("http://example.com", 3)
 
 	body := `<link rel="icon" href="/favicon.ico">
-		<link rel="stylesheet" href="/s.css"><base href="/base/">
+		<link rel="stylesheet" href="/s.css">
 		<area shape="rect" href="/area"><abbr title="x">y</abbr>
 		<a href="/a">a</a> <a class="x" href='/b'>b</a> <A HREF="/c">c</A>
 		<a
-		  data-href="/no" href = "/d">d</a> <a href="/it's">e</a>`
-	got := strings.Join(c.ExtractLinks(body), " ")
-	if want := "/a /b /c /d /it's"; got != want {
-		t.Errorf("links = %q, want %q", got, want)
+		  data-href="/no" href = "/d">d</a> <a href="/it's">e</a>
+		<a title="a > b" href="/gt">f</a> <a onclick="if(a>b)go()" href="/js">g</a>
+		<a title="see href='/y'" href="/x">h</a> <a href=/pricing>i</a>
+		<a href="/q?a=1&amp;b=2">j</a> <a href="/self"/>
+		<!-- <a href="/comment">k</a> -->
+		<script>var s = '<a href="/script">';</script>
+		<style>/* <a href="/style"> */</style>`
+	got := strings.Join(c.ExtractLinks(body, page), " ")
+	want := "http://example.com/a http://example.com/b http://example.com/c http://example.com/d http://example.com/it's " +
+		"http://example.com/gt http://example.com/js http://example.com/x http://example.com/pricing " +
+		"http://example.com/q?a=1&b=2 http://example.com/self"
+	if got != want {
+		t.Errorf("links = %q,\nwant %q", got, want)
+	}
+}
+
+// Links resolve against the first <base href>, itself resolved against the
+// page, wherever the links appear; without one, against the page.
+func TestExtractLinks_BaseHref(t *testing.T) {
+	c, _ := New("http://example.com", 3)
+	docs := &url.URL{Scheme: "http", Host: "example.com", Path: "/docs/x"}
+
+	tests := []struct{ name, body, want string }{
+		{"no base", `<a href="about">`, "http://example.com/docs/about"},
+		{"root base", `<base href="/"><a href="about">`, "http://example.com/about"},
+		{"base after the link", `<a href="about"><base href="/">`, "http://example.com/about"},
+		{"relative base", `<base href="v2/"><a href="about">`, "http://example.com/docs/v2/about"},
+		{"first base wins", `<base href="/one/"><base href="/two/"><a href="about">`, "http://example.com/one/about"},
+		{"base without href", `<base target="_top"><base href="/"><a href="about">`, "http://example.com/about"},
+		{"absolute path ignores base", `<base href="/one/"><a href="/about">`, "http://example.com/about"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := strings.Join(c.ExtractLinks(tt.body, docs), " "); got != tt.want {
+				t.Errorf("links = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
