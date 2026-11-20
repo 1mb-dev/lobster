@@ -85,7 +85,7 @@ func (c *Crawler) AddURL(rawURL string, depth int, urlQueue chan<- domain.URLTas
 	}
 
 	// Only process URLs from the same host
-	if parsedURL.Host != c.baseURL.Host {
+	if parsedURL.Host != c.baseURL.Host || !c.schemeAllowed(parsedURL) {
 		return domain.AddURLResult{Added: false, Reason: domain.AddURLInvalidHost}
 	}
 
@@ -120,6 +120,15 @@ func (c *Crawler) AddURL(rawURL string, depth int, urlQueue chan<- domain.URLTas
 		c.droppedCnt.Add(1)
 		return domain.AddURLResult{Added: false, Reason: domain.AddURLQueueFull}
 	}
+}
+
+// schemeAllowed accepts the base scheme, or the http to https upgrade on
+// default ports; a downgrade would send the run's credentials in plaintext.
+func (c *Crawler) schemeAllowed(u *url.URL) bool {
+	if strings.EqualFold(u.Scheme, c.baseURL.Scheme) {
+		return true
+	}
+	return strings.EqualFold(c.baseURL.Scheme, "http") && strings.EqualFold(u.Scheme, "https") && u.Port() == ""
 }
 
 // GetDiscoveredCount returns the number of discovered URLs (O(1) operation)

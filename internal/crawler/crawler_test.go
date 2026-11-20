@@ -322,3 +322,24 @@ func TestGetDroppedCount(t *testing.T) {
 		t.Errorf("Expected discovered count 4, got %d", discoveredCount)
 	}
 }
+
+func TestAddURL_SchemeDowngrade(t *testing.T) {
+	tests := []struct {
+		name, base, link string
+		want             bool
+	}{
+		{"https base, http link", "https://example.com", "http://example.com/x", false},
+		{"http base, https link", "http://example.com", "https://example.com/x", true},
+		{"same scheme", "https://example.com", "https://example.com/x", true},
+		{"upgrade on a custom port", "http://example.com:8080", "https://example.com:8080/x", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := New(tt.base, 3)
+			got := c.AddURL(tt.link, 1, make(chan domain.URLTask, 1)).Added
+			if got != tt.want {
+				t.Errorf("AddURL(%s) on %s = %v, want %v", tt.link, tt.base, got, tt.want)
+			}
+		})
+	}
+}
