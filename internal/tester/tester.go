@@ -1,4 +1,4 @@
-// Package tester implements the core load testing engine with concurrent workers.
+// Package tester crawls a site with concurrent workers and records each page's response.
 package tester
 
 import (
@@ -34,7 +34,7 @@ const (
 	defaultQueueSize = 10000
 )
 
-// Tester orchestrates the stress testing process
+// Tester crawls a site from its base URL and records each page's response.
 type Tester struct {
 	config       domain.TesterConfig
 	client       *http.Client
@@ -63,7 +63,7 @@ type Tester struct {
 	doneOnce    sync.Once
 }
 
-// New creates a new stress tester
+// New creates a Tester for config.
 func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 	// Create crawler
 	crawlerInstance, err := crawler.New(config.BaseURL, config.MaxDepth)
@@ -154,7 +154,7 @@ func New(config domain.TesterConfig, logger *slog.Logger) (*Tester, error) {
 	}, nil
 }
 
-// Run executes the stress test
+// Run crawls the site until every discovered page is fetched or ctx ends.
 func (t *Tester) Run(ctx context.Context) (*domain.TestResults, error) {
 	startTime := time.Now()
 

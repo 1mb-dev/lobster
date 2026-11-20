@@ -1,4 +1,4 @@
-// Package config handles loading and saving configuration files for load tests.
+// Package config handles loading and saving lobster's configuration files.
 package config
 
 import (

@@ -1,4 +1,4 @@
-// Package domain defines core domain types and interfaces for the load testing tool.
+// Package domain defines core domain types and interfaces for lobster's crawl, checks and load.
 package domain
 
 import (

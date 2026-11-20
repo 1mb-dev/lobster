@@ -6,7 +6,7 @@ import (
 	"github.com/1mb-dev/lobster/v2/internal/stats"
 )
 
-// URLTask represents a URL to be tested during stress testing.
+// URLTask is a URL the crawl will request.
 // Depth tracks how many links deep this URL was discovered from the base URL,
 // used to enforce MaxDepth limits during recursive link discovery.
 type URLTask struct {
@@ -16,7 +16,7 @@ type URLTask struct {
 	Depth int
 }
 
-// TestResults contains comprehensive results from a stress test execution.
+// TestResults contains a run's results: the crawl's, and the load's when -load ran.
 // This is the main output structure containing all metrics, validations,
 // and performance data collected during the test run.
 type TestResults struct {
@@ -54,7 +54,7 @@ type TestResults struct {
 	RobotsBlocked int64 `json:"robots_blocked"`
 	// URLsDropped counts discovered URLs the full queue could not take.
 	URLsDropped int64 `json:"urls_dropped"`
-	// CrawlComplete is true when every discovered URL was requested (none pending, dropped or abandoned) and every page's links were read.
+	// CrawlComplete is true when every discovered URL was requested (none pending, dropped or abandoned) and no page's body was cut off while its links were read. Links are read from a page's first 10MB, and from none of a page that declares a larger Content-Length; what is not read does not make the crawl incomplete.
 	CrawlComplete bool `json:"crawl_complete"`
 	// IncompleteReason says why the crawl is incomplete: IncompleteQueueFull, IncompleteDuration or IncompleteLinksCutOff.
 	IncompleteReason string `json:"incomplete_reason,omitempty"`
@@ -93,7 +93,7 @@ type URLValidation struct {
 	IsValid bool `json:"is_valid"`
 }
 
-// ErrorInfo represents an error encountered during stress testing.
+// ErrorInfo is an error the crawl recorded for a URL.
 // Errors are collected for reporting and debugging purposes.
 type ErrorInfo struct {
 	// Timestamp is when the error occurred.

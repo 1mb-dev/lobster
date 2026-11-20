@@ -1,4 +1,4 @@
-// Package domain defines core domain types and entities for the load testing tool.
+// Package domain defines core domain types and entities for lobster's crawl, checks and load.
 package domain
 
 import (
@@ -42,7 +42,7 @@ type Config struct {
 	PerformanceTargets PerformanceTargets `json:"performance_targets"`
 	// Auth contains authentication configuration (optional).
 	Auth *AuthConfig `json:"auth,omitempty"`
-	// BaseURL is the starting URL for the stress test (required).
+	// BaseURL is the URL the crawl starts from (required).
 	BaseURL string `json:"base_url"`
 	// Duration is the crawl's time ceiling as a Go duration string (e.g., "2m", "30s").
 	Duration string `json:"duration"`
@@ -72,14 +72,14 @@ type Config struct {
 	IgnoreRobots bool `json:"ignore_robots"`
 }
 
-// TesterConfig represents the internal configuration for the stress tester.
+// TesterConfig represents the internal configuration for the Tester.
 // This is converted from Config after parsing and validation.
 type TesterConfig struct {
 	// RequestTimeout is the parsed timeout duration for HTTP requests.
 	RequestTimeout time.Duration
 	// Auth contains authentication settings.
 	Auth *AuthConfig
-	// BaseURL is the starting URL for the stress test.
+	// BaseURL is the URL the crawl starts from.
 	BaseURL string
 	// UserAgent is the User-Agent header value.
 	UserAgent string

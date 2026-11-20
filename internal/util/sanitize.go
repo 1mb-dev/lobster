@@ -1,4 +1,4 @@
-// Package util provides utility functions for the Lobster load testing tool.
+// Package util provides URL validation, connection address checks and sanitizing for lobster.
 package util
 
 import (
