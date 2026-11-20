@@ -150,7 +150,7 @@ docs(readme): update installation instructions
 lobster/
 ├── cmd/lobster/          # CLI entry point
 ├── internal/
-│   ├── cli/               # Flag merging, auth, help text
+│   ├── cli/               # Flag registration, config building, auth, help text
 │   ├── config/            # Configuration file loading
 │   ├── crawler/           # URL discovery
 │   ├── domain/            # Core entities

@@ -37,7 +37,7 @@ lobster -url http://localhost:3000 -allow-private-ips
 Check a public site you own:
 
 ```bash
-lobster -url https://example.com -duration 30s
+lobster -url https://example.com
 ```
 
 See the [Quick Start Guide](quickstart) for more examples.

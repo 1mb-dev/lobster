@@ -30,7 +30,7 @@ Or clone and build:
 ```bash
 git clone https://github.com/1mb-dev/lobster.git
 cd lobster
-go build -o lobster cmd/lobster/main.go
+go build -o lobster ./cmd/lobster
 ```
 
 ### Basic Usage
@@ -44,10 +44,10 @@ lobster -url http://localhost:3000 -allow-private-ips
 Check a public site you own:
 
 ```bash
-lobster -url https://example.com -duration 30s
+lobster -url https://example.com
 ```
 
-Lobster prints a summary when the crawl ends. Add `-output results.json` for JSON, `-html report.html` for an HTML report.
+Lobster prints a summary when the run ends. Add `-output results.json` for JSON, `-html report.html` for an HTML report.
 
 Crawl, then replay the pages found at 50 req/s for 30 seconds:
 
@@ -122,7 +122,7 @@ Overall: PASS (1/1 targets met)
 ```
 
 - **JSON** (`-output results.json`): the same metrics, per-URL results, a response-time histogram, the load phase if one ran, and `performance_validation.overall_status` (`PASS` or `FAIL`).
-- **HTML** (`-html report.html`): summary cards, status counts, per-URL table, errors, slow requests and a response-time histogram, with no external scripts.
+- **HTML** (`-html report.html`): summary cards, status counts, per-URL table, errors, slow requests and a response-time histogram for the crawl (no load phase or verdict), with no external scripts.
 
 ## Use Cases
 

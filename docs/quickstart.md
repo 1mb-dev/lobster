@@ -14,7 +14,7 @@ Get up and running with Lobster in 5 minutes.
 ```bash
 git clone https://github.com/1mb-dev/lobster.git
 cd lobster
-go build -o lobster cmd/lobster/main.go
+go build -o lobster ./cmd/lobster
 ```
 
 ### Using Go Install
@@ -57,7 +57,7 @@ Parameters:
 - `-rate 10`: up to 10 requests per second in total
 - `-duration 5m`: give the crawl up to 5 minutes
 - `-output results.json`: write the results as JSON
-- `-html report.html`: write an HTML report with a response-time histogram
+- `-html report.html`: write an HTML report of the crawl with a response-time histogram
 
 ### 3. Configure Performance Targets
 
