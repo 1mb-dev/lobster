@@ -15,7 +15,8 @@ type URLCrawler interface {
 	ExtractLinks(body io.Reader, page *url.URL) ([]string, error)
 
 	// SetBaseFinalURL records the URL the base page was served from, after
-	// redirects; pages on the base origin are queued with its scheme.
+	// redirects; when it is https, the base origin's http links are fetched
+	// over https.
 	SetBaseFinalURL(final *url.URL)
 
 	// AddURL adds a URL to the discovery queue if valid and not already discovered.

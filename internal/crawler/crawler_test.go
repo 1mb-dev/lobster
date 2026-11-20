@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -453,7 +454,9 @@ func TestAddURL_SchemeDowngrade(t *testing.T) {
 		{"http base served over https, https link on port 443", "http://example.com", "https://example.com/", "https://example.com:443/x", "https://example.com/x"},
 		{"http base on port 80 served over https, https link", "http://example.com:80", "https://example.com/", "https://EXAMPLE.com:443/x", "https://example.com/x"},
 		{"http base on an IPv6 address served over https, https link", "http://[::1]:80", "https://[::1]/", "https://[::1]:443/x", "https://[::1]/x"},
-		{"http base served over http, https link", "http://example.com", "http://example.com/", "https://example.com:443/x", "http://example.com/x"},
+		{"http base served over http, https link", "http://example.com", "http://example.com/", "https://example.com:443/account", "https://example.com/account"},
+		{"http base served over http, http link", "http://example.com", "http://example.com/", "http://example.com/x", "http://example.com/x"},
+		{"http base served over https, http link", "http://example.com", "https://example.com/", "http://example.com:80/x", "https://example.com/x"},
 		{"same scheme", "https://example.com", "", "https://example.com/x", "https://example.com/x"},
 		{"same scheme, default port spelled out", "https://example.com", "", "https://EXAMPLE.com:443/x", "https://example.com/x"},
 		{"upgrade on a custom port", "http://example.com:8080", "", "https://example.com:8080/x", ""},
@@ -478,17 +481,21 @@ func TestAddURL_SchemeDowngrade(t *testing.T) {
 	}
 }
 
-// The http:80 and https:443 spellings of a page are one URL: an http base
-// that redirects to https is not crawled twice. The first spelling is queued.
+// On a crawl served over https, the http:80 and https:443 spellings of a page
+// are one URL: an http base that redirects to https is not crawled twice.
 func TestAddURL_SchemePairIsOnePage(t *testing.T) {
-	tests := []struct{ base, first, second string }{
-		{"http://example.com", "http://example.com/", "https://example.com/"},
-		{"http://example.com", "https://example.com/a", "http://example.com/a"},
-		{"http://example.com:80", "http://example.com:80/a?q=1", "https://example.com:443/a?q=1"},
-		{"https://example.com", "https://example.com/a", "http://example.com/a"},
+	tests := []struct{ base, final, first, second string }{
+		{"http://example.com", "https://example.com/", "http://example.com/", "https://example.com/"},
+		{"http://example.com", "https://example.com/", "https://example.com/a", "http://example.com/a"},
+		{"http://example.com:80", "https://example.com/", "http://example.com:80/a?q=1", "https://example.com:443/a?q=1"},
+		{"https://example.com", "", "https://example.com/a", "http://example.com/a"},
 	}
 	for _, tt := range tests {
 		c, _ := New(tt.base, 3)
+		if tt.final != "" {
+			final, _ := url.Parse(tt.final)
+			c.SetBaseFinalURL(final)
+		}
 		queue := make(chan domain.URLTask, 2)
 		if res := c.AddURL(tt.first, 1, queue); !res.Added {
 			t.Fatalf("%s on %s: %s", tt.first, tt.base, res.Reason)
@@ -499,31 +506,35 @@ func TestAddURL_SchemePairIsOnePage(t *testing.T) {
 	}
 }
 
-// The http:80 and https:443 spellings of a page are queued with the scheme the
-// base page was served over, whichever spelling a link uses and whichever is
-// found first.
-func TestAddURL_SpellingFollowsBaseNotOrder(t *testing.T) {
-	tests := []struct{ name, final, want string }{
-		{"base stayed on http", "http://example.com/", "http://example.com/p"},
-		{"base redirected to https", "https://example.com/home", "https://example.com/p"},
+// No link is downgraded, and discovery order does not change what is queued:
+// on a base served over http, http and https are two pages; on one served over
+// https, an http link is the https page, the base included.
+func TestAddURL_NoDowngradeWhateverTheOrder(t *testing.T) {
+	tests := []struct {
+		name, final string
+		want        []string
+	}{
+		{"base stayed on http", "http://example.com/", []string{"http://example.com/", "http://example.com/p", "https://example.com/", "https://example.com/p"}},
+		{"base redirected to https", "https://example.com/home", []string{"http://example.com/", "https://example.com/p"}},
 	}
+	links := []string{"http://example.com/p", "https://example.com/p", "https://example.com/"}
 	for _, tt := range tests {
-		for _, order := range [][]string{
-			{"http://example.com/p", "https://example.com/p"},
-			{"https://example.com/p", "http://example.com/p"},
-		} {
+		for _, order := range [][]string{links, {links[2], links[1], links[0]}} {
 			c, _ := New("http://example.com", 3)
+			queue := make(chan domain.URLTask, 8)
+			c.AddURL("http://example.com", 0, queue) // the base, queued before it is fetched
 			final, _ := url.Parse(tt.final)
 			c.SetBaseFinalURL(final)
-			queue := make(chan domain.URLTask, 2)
 			for _, link := range order {
 				c.AddURL(link, 1, queue)
 			}
-			if len(queue) != 1 {
-				t.Fatalf("%s, %v: %d queued, want 1", tt.name, order, len(queue))
+			var got []string
+			for len(queue) > 0 {
+				got = append(got, (<-queue).URL)
 			}
-			if got := (<-queue).URL; got != tt.want {
-				t.Errorf("%s, %v: queued %s, want %s", tt.name, order, got, tt.want)
+			slices.Sort(got)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("%s, %v: queued %v, want %v", tt.name, order, got, tt.want)
 			}
 		}
 	}

@@ -19,7 +19,7 @@ import (
 type Crawler struct {
 	discoveredURLs sync.Map
 	baseURL        *url.URL
-	scheme         atomic.Pointer[string] // the scheme pages on the base origin are queued with
+	scheme         atomic.Pointer[string] // the crawl's scheme: the base page's, after redirects
 	maxDepth       int
 	discoveredCnt  atomic.Int64 // O(1) counter for discovered URLs
 	droppedCnt     atomic.Int64 // Counter for URLs dropped due to queue full
@@ -42,9 +42,9 @@ func New(baseURL string, maxDepth int) (*Crawler, error) {
 }
 
 // SetBaseFinalURL records the URL the base page was served from, after
-// redirects: an http base on port 80 that ended on https queues its pages
-// over https, and one that stayed on http queues them over http, whichever
-// spelling a link uses. A URL off the base origin is ignored.
+// redirects. When it is https, http links on port 80 are fetched over https
+// and the two spellings of a page are one; otherwise each link keeps its
+// scheme. A URL off the base origin is ignored.
 func (c *Crawler) SetBaseFinalURL(final *url.URL) {
 	if util.SameOrigin(c.baseURL, final) {
 		scheme := strings.ToLower(final.Scheme)
@@ -149,19 +149,19 @@ func (c *Crawler) AddURL(rawURL string, depth int, urlQueue chan<- domain.URLTas
 		parsedURL = c.baseURL.ResolveReference(parsedURL)
 	}
 
-	// On an https base, an http link on port 80 is fetched over https: a
-	// downgrade would send the run's credentials in plaintext.
-	if strings.EqualFold(c.baseURL.Scheme, "https") && strings.EqualFold(parsedURL.Scheme, "http") && util.PortOf(parsedURL) == "80" {
+	// On an https crawl, an http link on port 80 is fetched over https. No
+	// link is ever downgraded: that would send the run's credentials in
+	// plaintext.
+	scheme := *c.scheme.Load()
+	if scheme == "https" && strings.EqualFold(parsedURL.Scheme, "http") && util.PortOf(parsedURL) == "80" {
 		parsedURL.Scheme = "https"
 		parsedURL.Host = strings.TrimSuffix(parsedURL.Host, ":80")
 	}
 	if !util.SameOrigin(c.baseURL, parsedURL) {
 		return domain.AddURLResult{Added: false, Reason: domain.AddURLInvalidHost}
 	}
-	// One spelling per page: SameOrigin leaves a scheme change only for an
-	// http base on port 80 and an https link on 443, and both are queued with
-	// the scheme the base page was served over.
-	parsedURL.Scheme = *c.scheme.Load()
+	// One host spelling per scheme. SameOrigin leaves a scheme change only for
+	// an http base on port 80 and an https link on 443.
 	if strings.EqualFold(parsedURL.Scheme, c.baseURL.Scheme) {
 		parsedURL.Host = c.baseURL.Host
 	} else {
@@ -183,9 +183,13 @@ func (c *Crawler) AddURL(rawURL string, depth int, urlQueue chan<- domain.URLTas
 	}
 
 	// Every queued URL is on the base origin or its https upgrade, so path
-	// and query name the page: the http:80 and https:443 spellings are one.
+	// and query name a page on the crawl's scheme. A link that keeps the other
+	// scheme (https on an http crawl) is its own page.
 	key := *parsedURL
-	key.Scheme, key.User, key.Host = "", nil, ""
+	key.User, key.Host = nil, ""
+	if parsedURL.Scheme == scheme {
+		key.Scheme = ""
+	}
 	if _, exists := c.discoveredURLs.LoadOrStore(key.String(), true); exists {
 		return domain.AddURLResult{Added: false, Reason: domain.AddURLDuplicate}
 	}
