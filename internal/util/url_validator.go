@@ -17,7 +17,7 @@ func (e *URLValidationError) Error() string {
 	return fmt.Sprintf("invalid URL %q: %s", e.URL, e.Reason)
 }
 
-// ValidateBaseURL validates a URL for use as a load test target.
+// ValidateBaseURL validates the base URL the crawl starts from.
 // It checks for:
 // - Valid URL syntax
 // - HTTP or HTTPS scheme only (blocks file://, ftp://, gopher://, etc.)
