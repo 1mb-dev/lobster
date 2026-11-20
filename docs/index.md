@@ -5,7 +5,7 @@ nav_order: 1
 
 # Lobster
 
-Crawl a site you own and check every page it links against performance targets.
+Crawl a site you own and check its response times and success rate against performance targets.
 
 Lobster starts at a base URL, follows same-host links, fetches each page it finds, and reports a pass or fail line for each performance target. With `-load`, it then replays the pages it found at a fixed rate. The exit code says whether the run passed.
 

@@ -1,5 +1,5 @@
 title: Lobster
-description: Crawl a site you own and check every page it links against performance targets
+description: Crawl a site you own and check its response times and success rate against performance targets
 url: https://1mb-dev.github.io
 baseurl: /lobster
 
