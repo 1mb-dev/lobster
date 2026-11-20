@@ -441,14 +441,12 @@ func (t *Tester) applyAuthentication(req *http.Request) error {
 		// Basic authentication: username:password
 		if auth.Username != "" {
 			req.SetBasicAuth(auth.Username, auth.Password)
-			t.logger.Debug("Applied basic authentication")
 		}
 
 	case "bearer":
 		// Bearer token authentication
 		if auth.Token != "" {
 			req.Header.Set("Authorization", "Bearer "+auth.Token)
-			t.logger.Debug("Applied bearer token authentication")
 		}
 
 	case "cookie":
@@ -458,14 +456,12 @@ func (t *Tester) applyAuthentication(req *http.Request) error {
 				Name:  name,
 				Value: value,
 			})
-			t.logger.Debug("Applied cookie", "name", name)
 		}
 
 	case "header":
 		// Custom header-based authentication
 		for name, value := range auth.Headers {
 			req.Header.Set(name, value)
-			t.logger.Debug("Applied custom header", "name", name)
 		}
 
 	case "":
