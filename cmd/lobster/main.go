@@ -1,4 +1,4 @@
-// Package main provides the lobster command: crawl a site and check each page against performance targets.
+// Package main provides the lobster command: crawl a site and check its response times and success rate against performance targets.
 package main
 
 import (

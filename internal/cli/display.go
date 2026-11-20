@@ -39,7 +39,7 @@ func CenterText(text string, width int) string {
 
 // ShowHelpMessage prints the help message to w; version is shown as given.
 func ShowHelpMessage(w io.Writer, version string) {
-	fmt.Fprintln(w, `Lobster - crawl a site you own and check each page against performance targets
+	fmt.Fprintln(w, `Lobster - crawl a site you own and check its response times and success rate against performance targets
 
 USAGE:
     lobster [OPTIONS]
