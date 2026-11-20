@@ -7,7 +7,7 @@ nav_order: 9
 
 ## Introduction
 
-Lobster is a powerful web application load testing tool designed to help developers and QA teams validate application performance. This document outlines the legal, ethical, and technical guidelines for using Lobster responsibly.
+Lobster crawls a site you own from a base URL, fetches each page it finds, and checks response times and success rate against performance targets. With `-load`, it then replays the pages it found at a fixed rate. This document outlines the legal, ethical, and technical guidelines for using Lobster responsibly.
 
 **Summary**: Only test systems you own or have explicit written permission to test. Respect rate limits, robots.txt, and privacy. If in doubt, do not proceed.
 
@@ -119,23 +119,24 @@ Whenever possible:
 lobster -url https://example.com
 
 # Only disable for internal testing with self-signed certificates
-lobster -url https://internal-test.local -insecure-skip-verify  # ⚠️ Development only
+LOBSTER_INSECURE_TLS=true lobster -url https://internal-test.local -allow-private-ips -insecure-skip-verify  # ⚠️ Development only
 ```
 
 **Never** disable TLS verification when testing over untrusted networks.
 
-### 5. Set Reasonable Test Durations
+### 5. Start With a Short Load
+
+`-duration` limits the crawl, and the run ends when the crawl does; traffic after the crawl comes from `-load`.
 
 ```bash
-# Good: Short initial tests to validate configuration
-lobster -url https://example.com -duration 30s
+# Good: a short load first, to check the configuration
+lobster -url http://localhost:3000 -allow-private-ips -load 30s
 
-# Then increase duration as needed
-lobster -url https://example.com -duration 10m
-
-# Avoid: Extremely long tests without monitoring
-lobster -url https://example.com -duration 24h  # ⚠️ Requires explicit approval
+# Then a longer one as needed
+lobster -url http://localhost:3000 -allow-private-ips -load 10m
 ```
+
+A long `-load` without monitoring needs explicit approval.
 
 ### 6. Monitor and Respond
 
@@ -185,7 +186,6 @@ Test reports may contain sensitive information:
 **Sensitive Data in Reports:**
 - URLs with API keys, tokens, or session IDs in query parameters
 - Error messages revealing system internals
-- Authentication headers and cookies
 - Internal server paths and configurations
 
 **Security Practices:**
@@ -202,7 +202,7 @@ When testing authenticated endpoints:
 
 ```bash
 # Use test accounts, never production user credentials
-lobster -url https://example.com -auth-type bearer -auth-token "test_token_12345"
+LOBSTER_AUTH_TOKEN="$TEST_TOKEN" lobster -url https://example.com -auth-type bearer
 
 # Good: Create dedicated test users
 # Bad: Using real user accounts
@@ -326,8 +326,6 @@ If you're unsure whether your use case is appropriate:
 ## Updates to These Guidelines
 
 These guidelines may be updated as best practices evolve. Check the [repository](https://github.com/1mb-dev/lobster) for the latest version.
-
-Last updated: 2025
 
 ## Summary
 
