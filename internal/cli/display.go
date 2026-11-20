@@ -70,7 +70,7 @@ OPTIONS:
     -rate float
         Requests per second, shared by all workers (default: 2.0)
         Minimum 0.1; below 1.0 asks for confirmation on a terminal
-        robots.txt Crawl-delay lowers it to 1/delay
+        robots.txt Crawl-delay lowers the crawl's rate to 1/delay
     -user-agent string
         User agent string (default: lobster/<version>)
     -max-depth int
