@@ -3,6 +3,7 @@ package domain
 
 import (
 	"context"
+	"io"
 	"net/url"
 )
 
@@ -11,7 +12,7 @@ import (
 type URLCrawler interface {
 	// ExtractLinks returns the links in an HTML body served from page,
 	// resolved against the body's <base href> or page.
-	ExtractLinks(body string, page *url.URL) []string
+	ExtractLinks(body io.Reader, page *url.URL) ([]string, error)
 
 	// SetBaseFinalURL records the URL the base page was served from, after
 	// redirects; pages on the base origin are queued with its scheme.

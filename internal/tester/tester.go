@@ -4,7 +4,6 @@ package tester
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -30,10 +29,6 @@ import (
 const (
 	// defaultSlowRequestThreshold is the response time above which requests are flagged as slow.
 	defaultSlowRequestThreshold = 2 * time.Second
-
-	// linkExtractionLimit is the maximum bytes to read for link discovery.
-	// 64KB is sufficient for most pages as links are typically in the head/upper body.
-	linkExtractionLimit = 64 * 1024
 
 	// defaultQueueSize is the default URL queue capacity when not configured.
 	defaultQueueSize = 10000
@@ -527,16 +522,6 @@ func (t *Tester) discoverLinksFromResponse(resp *http.Response, task domain.URLT
 		return 0
 	}
 
-	// Limit body reading for link extraction (smaller than MaxResponseSize)
-	limitedReader := io.LimitReader(resp.Body, linkExtractionLimit)
-	body, readErr := io.ReadAll(limitedReader)
-	if readErr != nil && !errors.Is(readErr, io.EOF) {
-		t.logger.Debug("Error reading response body for link extraction",
-			"url", util.SanitizeURLDefault(task.URL),
-			"error", readErr)
-		return 0
-	}
-
 	// The page's URL after redirects; a test double may leave Request unset,
 	// and then the task URL is what was asked for.
 	page, err := url.Parse(task.URL)
@@ -550,7 +535,13 @@ func (t *Tester) discoverLinksFromResponse(resp *http.Response, task domain.URLT
 		t.crawler.SetBaseFinalURL(page)
 	}
 
-	links := t.crawler.ExtractLinks(string(body), page)
+	links, readErr := t.crawler.ExtractLinks(io.LimitReader(resp.Body, maxSize), page)
+	if readErr != nil {
+		t.logger.Debug("Error reading response body for link extraction",
+			"url", util.SanitizeURLDefault(task.URL),
+			"error", readErr)
+		return 0
+	}
 	for _, link := range links {
 		if t.enqueue(link, task.Depth+1) {
 			atomic.StoreInt64(&t.results.URLsDiscovered, int64(t.crawler.GetDiscoveredCount()))

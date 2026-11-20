@@ -15,12 +15,13 @@ import (
 
 // site serves HTML pages from a path→links map; unknown paths get 404.
 // robots, when non-empty, is served at /robots.txt; redirects maps a path to
-// its 301 target; bases maps a path to its <base href>. hits counts page
-// requests.
+// its 301 target; bases maps a path to its <base href>; pad bytes of text
+// precede every page's links. hits counts page requests.
 type site struct {
 	pages     map[string][]string
 	redirects map[string]string
 	bases     map[string]string
+	pad       int
 	robots    string
 	delay     time.Duration
 
@@ -51,6 +52,7 @@ func (s *site) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	time.Sleep(s.delay)
 	w.Header().Set("Content-Type", "text/html")
+	_, _ = w.Write([]byte(strings.Repeat("x", s.pad)))
 	if base := s.bases[r.URL.Path]; base != "" {
 		_, _ = fmt.Fprintf(w, `<base href="%s">`, base)
 	}
@@ -252,5 +254,15 @@ func TestCompleteness_Duration(t *testing.T) {
 	}
 	if strings.Contains(fmt.Sprint(r.Errors), "canceled") {
 		t.Errorf("a cut-off request was recorded as an error: %v", r.Errors)
+	}
+}
+
+// Links are read from the whole page up to MaxResponseSize, not its first 64KB.
+func TestCrawl_LinksPast64KB(t *testing.T) {
+	s := &site{pages: map[string][]string{"/": {"/far"}, "/far": nil}, pad: 100 << 10}
+	crawl(t, s, "/", 10*time.Second, nil)
+
+	if _, hits := s.pageHits(); hits["/far"] != 1 {
+		t.Errorf("/far fetched %d times, want 1 (pages fetched: %v)", hits["/far"], hits)
 	}
 }

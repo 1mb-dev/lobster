@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Only `<a href>` links are followed, quoted or not; an `href` on any other tag, such as `<link>` or `<area>`, or inside a comment or `<script>`, is no longer crawled
 - Relative links resolve against the page's `<base href>`, or the page they were found on after redirects
+- Links are read from the first 10MB of a page, not the first 64KB
 - An `href` with a tab or line break inside is followed, as a browser reads it
 
 ### Security

@@ -195,6 +195,8 @@ echo "exit code: $?"
 
 A crawl is complete when every discovered URL was requested: none dropped from a full queue (raise `-queue-size`) and none cut off by `-duration` (raise `-duration` or `-rate`). The JSON report gives `crawl_complete` and, when it is false, `incomplete_reason`.
 
+Links are read from the first 10MB of each HTML page. A page that declares a larger `Content-Length` is not read for links, and the rest of a longer page is not read; neither makes the crawl incomplete.
+
 ## Load Phase
 
 `-load 30s` runs after a complete crawl. It sends one request every `1/-rate` seconds to the crawled pages that responded 200-399, in turn:

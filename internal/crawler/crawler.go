@@ -2,6 +2,8 @@
 package crawler
 
 import (
+	"errors"
+	"io"
 	"net/url"
 	"strings"
 	"sync"
@@ -53,14 +55,19 @@ func (c *Crawler) SetBaseFinalURL(final *url.URL) {
 // ExtractLinks returns the href of every <a> element in an HTML body, resolved
 // against the document's base URL: the first <base href>, itself resolved
 // against page, or page when there is none. page is the URL the body was
-// served from, after redirects. Only http and https links are returned.
-func (c *Crawler) ExtractLinks(body string, page *url.URL) []string {
+// served from, after redirects. Only http and https links are returned. It
+// reads body to the end, holding one token at a time, and returns the read
+// error if one cut it short.
+func (c *Crawler) ExtractLinks(body io.Reader, page *url.URL) ([]string, error) {
 	base, baseSet := page, false
 	var hrefs []string
-	z := html.NewTokenizer(strings.NewReader(body))
+	z := html.NewTokenizer(body)
 	for {
 		tt := z.Next()
 		if tt == html.ErrorToken {
+			if err := z.Err(); !errors.Is(err, io.EOF) {
+				return nil, err
+			}
 			break
 		}
 		if tt != html.StartTagToken && tt != html.SelfClosingTagToken {
@@ -85,7 +92,7 @@ func (c *Crawler) ExtractLinks(body string, page *url.URL) []string {
 		}
 	}
 
-	return c.resolve(hrefs, base)
+	return c.resolve(hrefs, base), nil
 }
 
 // resolve returns the hrefs that lead to another page, as http or https URLs

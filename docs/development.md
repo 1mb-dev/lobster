@@ -69,7 +69,7 @@ See [testing](testing) for the testing guide.
 - One goflow token bucket with a burst of 1 spaces requests `1/-rate` apart across all workers; a robots.txt `Crawl-delay` lowers the rate to `1/delay`.
 - A pending counter tracks queued and in-flight URLs; the run ends when it reaches zero, or at the `-duration` deadline. The URL queue is never closed.
 - The crawl is complete when nothing is pending, no URL was dropped from a full queue, and no request was cut off by the deadline.
-- An http base on port 80 queues its pages with the scheme the base page was served over after redirects.
+- Links come from streaming up to `MaxResponseSize` (10MB default) of each HTML page through `html.Tokenizer`; a larger `Content-Length` skips the page. An http base on port 80 queues its pages with the scheme the base page was served over after redirects.
 
 ### Load
 

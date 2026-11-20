@@ -1,9 +1,12 @@
 package crawler
 
 import (
+	"errors"
+	"io"
 	"net/url"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
 )
@@ -13,7 +16,11 @@ var page = &url.URL{Scheme: "http", Host: "example.com", Path: "/"}
 
 func extract(t *testing.T, c *Crawler, body string, page *url.URL) []string {
 	t.Helper()
-	return c.ExtractLinks(body, page)
+	links, err := c.ExtractLinks(strings.NewReader(body), page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return links
 }
 
 func TestNew_Success(t *testing.T) {
@@ -212,6 +219,16 @@ func TestExtractLinks_HrefAsBrowserReads(t *testing.T) {
 	got := strings.Join(extract(t, c, body, page), " ")
 	if want := "http://example.com/docs/getting-started http://example.com/tab http://example.com/cr http://example.com/up"; got != want {
 		t.Errorf("links = %q,\nwant %q", got, want)
+	}
+}
+
+// A read error cuts extraction short and is returned.
+func TestExtractLinks_ReadError(t *testing.T) {
+	c, _ := New("http://example.com", 3)
+	reset := errors.New("connection reset")
+	body := io.MultiReader(strings.NewReader(`<a href="/x">`), iotest.ErrReader(reset))
+	if _, err := c.ExtractLinks(body, page); !errors.Is(err, reset) {
+		t.Errorf("err = %v, want %v", err, reset)
 	}
 }
 
