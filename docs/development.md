@@ -98,7 +98,8 @@ Response times go into a fixed histogram of 224 log buckets (8 per octave), so m
 1. Update `CHANGELOG.md`.
 2. `make ci` passes.
 3. Merge to `main`; wait for CI to pass on the merge commit.
-4. Tag: `git tag -a vX.Y.Z -m "vX.Y.Z"` and push the tag.
+4. Tag the merge commit with an annotated tag whose message is the release's pet name, or empty for an unnamed release: `git tag -a vX.Y.Z -m "<name>"`. Push the tag. The release workflow creates a draft release titled `vX.Y.Z - <name>` (or `vX.Y.Z`) with generated notes.
+5. Replace the generated notes with what upgraders must do, any security lines, and the changelog and compare links, then publish.
 
 `-version` reads the version from the build: `make build` passes `git describe` through ldflags, and `go install` records the module version.
 
