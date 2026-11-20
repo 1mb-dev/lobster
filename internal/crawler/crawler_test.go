@@ -374,3 +374,24 @@ func TestAddURL_SchemeDowngrade(t *testing.T) {
 		})
 	}
 }
+
+// The http:80 and https:443 spellings of a page are one URL: an http base
+// that redirects to https is not crawled twice. The first spelling is queued.
+func TestAddURL_SchemePairIsOnePage(t *testing.T) {
+	tests := []struct{ base, first, second string }{
+		{"http://example.com", "http://example.com/", "https://example.com/"},
+		{"http://example.com", "https://example.com/a", "http://example.com/a"},
+		{"http://example.com:80", "http://example.com:80/a?q=1", "https://example.com:443/a?q=1"},
+		{"https://example.com", "https://example.com/a", "http://example.com/a"},
+	}
+	for _, tt := range tests {
+		c, _ := New(tt.base, 3)
+		queue := make(chan domain.URLTask, 2)
+		if res := c.AddURL(tt.first, 1, queue); !res.Added {
+			t.Fatalf("%s on %s: %s", tt.first, tt.base, res.Reason)
+		}
+		if res := c.AddURL(tt.second, 1, queue); res.Reason != domain.AddURLDuplicate {
+			t.Errorf("%s after %s on %s: %s, want %s", tt.second, tt.first, tt.base, res.Reason, domain.AddURLDuplicate)
+		}
+	}
+}

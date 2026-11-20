@@ -114,8 +114,11 @@ func (c *Crawler) AddURL(rawURL string, depth int, urlQueue chan<- domain.URLTas
 		return domain.AddURLResult{Added: false, Reason: domain.AddURLDepthExceeded}
 	}
 
-	// Check if already discovered
-	if _, exists := c.discoveredURLs.LoadOrStore(cleanURL, true); exists {
+	// Every queued URL is on the base origin or its https upgrade, so path
+	// and query name the page: the http:80 and https:443 spellings are one.
+	key := *parsedURL
+	key.Scheme, key.User, key.Host = "", nil, ""
+	if _, exists := c.discoveredURLs.LoadOrStore(key.String(), true); exists {
 		return domain.AddURLResult{Added: false, Reason: domain.AddURLDuplicate}
 	}
 
