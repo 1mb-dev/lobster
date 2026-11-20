@@ -57,7 +57,8 @@ type run struct {
 }
 
 // record adds one finished request: its latency from the intended send time
-// and its status (0 for a transport error). It does not allocate.
+// and its status (0 when the request or reading its body failed). It does not
+// allocate.
 func (r *run) record(latency time.Duration, status int) {
 	r.mu.Lock()
 	r.hist.Record(latency)
@@ -225,7 +226,8 @@ func sleepUntil(ctx context.Context, timer *time.Timer, t time.Time) bool {
 	}
 }
 
-// send performs one request and returns its status, or 0 on a transport error.
+// send performs one request, reads up to 1MB of its body, and returns its
+// status, or 0 when the request fails or reading the body fails.
 func send(ctx context.Context, cfg Config, rawURL string) int {
 	req, err := cfg.Requester.NewRequest(ctx, rawURL)
 	if err != nil {
@@ -235,8 +237,11 @@ func send(ctx context.Context, cfg Config, rawURL string) int {
 	if err != nil {
 		return 0
 	}
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 	_ = resp.Body.Close()
+	if err != nil {
+		return 0
+	}
 	return resp.StatusCode
 }
 

@@ -313,6 +313,20 @@ func TestRun_LoadAbortsOnConnectionErrors(t *testing.T) {
 			case <-release:
 			}
 		}},
+		{"body timeout", func(w http.ResponseWriter, r *http.Request, release <-chan struct{}) {
+			w.WriteHeader(http.StatusOK)
+			_ = http.NewResponseController(w).Flush()
+			select {
+			case <-r.Context().Done():
+			case <-release:
+			}
+		}},
+		{"body cut off", func(w http.ResponseWriter, _ *http.Request, _ <-chan struct{}) {
+			if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
+				_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial"))
+				_ = conn.Close()
+			}
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
