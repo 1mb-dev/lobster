@@ -37,7 +37,7 @@ func redirectPolicy(base *url.URL, rp *robots.Parser, ignoreRobots bool) func(*h
 				Reason: reason,
 			}
 		}
-		if len(via) >= maxRedirects {
+		if len(via) > maxRedirects {
 			return refuse(fmt.Sprintf("more than %d redirects", maxRedirects))
 		}
 		if !util.SameOrigin(base, req.URL) {

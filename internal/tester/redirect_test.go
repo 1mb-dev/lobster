@@ -124,8 +124,9 @@ func TestRedirect_Capped(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("more than %d redirects", maxRedirects)) {
 		t.Fatalf("Run error = %v, want the redirect cap", err)
 	}
-	if hits.Load() != maxRedirects {
-		t.Errorf("server saw %d requests, want %d", hits.Load(), maxRedirects)
+	// The request and its maxRedirects redirects; the next redirect is refused.
+	if hits.Load() != maxRedirects+1 {
+		t.Errorf("server saw %d requests, want %d", hits.Load(), maxRedirects+1)
 	}
 }
 
