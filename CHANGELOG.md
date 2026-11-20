@@ -43,6 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The error-rate target and the three-tier verdicts
 - The per-request `response_times` list in the JSON report
 
+### Fixed
+
+- Only `<a href>` links are followed; an `href` on any other tag, such as `<link>`, `<base>` or `<area>`, is no longer crawled
+
 ### Security
 
 - Every connection's address is checked when it is dialed, so a hostname that resolves or rebinds to a private address is refused; IPv4-mapped, NAT64, 6to4, Teredo, 198.18.0.0/15 and `.localhost` addresses are covered

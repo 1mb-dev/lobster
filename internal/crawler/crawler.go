@@ -32,24 +32,22 @@ func New(baseURL string, maxDepth int) (*Crawler, error) {
 
 	return &Crawler{
 		baseURL:    parsedURL,
-		urlPattern: regexp.MustCompile(`href=["']([^"']+)["']`),
+		urlPattern: regexp.MustCompile(`(?i)<a\s+(?:[^>]*?\s)?href\s*=\s*(?:"([^"]*)"|'([^']*)')`),
 		maxDepth:   maxDepth,
 	}, nil
 }
 
-// ExtractLinks extracts all links from HTML body
+// ExtractLinks extracts the href of every <a> element in an HTML body
 func (c *Crawler) ExtractLinks(body string) []string {
 	matches := c.urlPattern.FindAllStringSubmatch(body, -1)
 	links := make([]string, 0, len(matches))
 
 	for _, match := range matches {
-		if len(match) > 1 {
-			link := strings.TrimSpace(match[1])
-			if c.isValidLink(link) {
-				// Decode HTML entities (e.g., &amp; -> &, &quot; -> ")
-				decodedLink := html.UnescapeString(link)
-				links = append(links, decodedLink)
-			}
+		link := strings.TrimSpace(match[1] + match[2]) // one quote style matched
+		if c.isValidLink(link) {
+			// Decode HTML entities (e.g., &amp; -> &, &quot; -> ")
+			decodedLink := html.UnescapeString(link)
+			links = append(links, decodedLink)
 		}
 	}
 

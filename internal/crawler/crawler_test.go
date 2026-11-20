@@ -1,6 +1,7 @@
 package crawler
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/1mb-dev/lobster/v2/internal/domain"
@@ -118,6 +119,22 @@ func TestExtractLinks_InvalidLinks(t *testing.T) {
 
 	if len(links) != 0 {
 		t.Errorf("Expected 0 valid links, got %d: %v", len(links), links)
+	}
+}
+
+// Only <a> elements are followed, whatever their other attributes, quotes or case.
+func TestExtractLinks_AnchorsOnly(t *testing.T) {
+	c, _ := New("http://example.com", 3)
+
+	body := `<link rel="icon" href="/favicon.ico">
+		<link rel="stylesheet" href="/s.css"><base href="/base/">
+		<area shape="rect" href="/area"><abbr title="x">y</abbr>
+		<a href="/a">a</a> <a class="x" href='/b'>b</a> <A HREF="/c">c</A>
+		<a
+		  data-href="/no" href = "/d">d</a> <a href="/it's">e</a>`
+	got := strings.Join(c.ExtractLinks(body), " ")
+	if want := "/a /b /c /d /it's"; got != want {
+		t.Errorf("links = %q, want %q", got, want)
 	}
 }
 
