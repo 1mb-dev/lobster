@@ -18,7 +18,7 @@ import (
 const (
 	// InFlight is the most requests in flight at once.
 	InFlight = 256
-	// AbortAfter is how many consecutive 429/5xx responses stop the load.
+	// AbortAfter is how many consecutive 429, 5xx or connection errors stop the load.
 	AbortAfter = 10
 )
 
@@ -69,9 +69,9 @@ func (r *run) record(latency time.Duration, status int) {
 		return
 	}
 	r.failed.Add(1)
-	if status == http.StatusTooManyRequests || status >= 500 {
+	if status == 0 || status == http.StatusTooManyRequests || status >= 500 {
 		if r.consec.Add(1) >= AbortAfter {
-			r.abort(fmt.Sprintf("%d consecutive 429/5xx responses", AbortAfter))
+			r.abort(fmt.Sprintf("%d consecutive 429, 5xx or connection errors", AbortAfter))
 		}
 		return
 	}

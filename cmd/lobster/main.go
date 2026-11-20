@@ -301,7 +301,7 @@ func runLoad(t *tester.Tester, cfg *domain.Config, results *domain.TestResults, 
 	cli.PrintWarningBox(stderr, "LOAD", []string{
 		fmt.Sprintf("Sending %g req/s to %s for %s", cfg.Rate, util.SanitizeURLDefault(cfg.BaseURL), duration),
 		fmt.Sprintf("%d pages that responded 200-399, up to %d requests in flight", len(urls), load.InFlight),
-		fmt.Sprintf("Stops after %d consecutive 429/5xx responses", load.AbortAfter),
+		fmt.Sprintf("Stops after %d consecutive 429, 5xx or connection errors", load.AbortAfter),
 	})
 
 	loadResults, err := load.Run(context.Background(), load.Config{

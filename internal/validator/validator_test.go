@@ -220,7 +220,7 @@ func TestValidateResults_LoadPhase(t *testing.T) {
 	}
 
 	crawl.Load = loadResults(100, 50)
-	crawl.Load.Aborted, crawl.Load.AbortReason = true, "10 consecutive 429/5xx responses"
+	crawl.Load.Aborted, crawl.Load.AbortReason = true, "10 consecutive 429, 5xx or connection errors"
 	v.ValidateResults(crawl)
 	if v.Passed() || v.GetValidationSummary()["load_aborted"] != true {
 		t.Error("an aborted load should fail the run")

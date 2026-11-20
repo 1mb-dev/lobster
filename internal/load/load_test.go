@@ -189,6 +189,57 @@ func TestRun_AbortsOnConsecutive5xx(t *testing.T) {
 	}
 }
 
+// A server that answers some requests with 503 and drops the connection on
+// the rest never sends 10 consecutive 503s, but it still stops the load.
+func TestRun_AbortsOnMixed5xxAndConnectionErrors(t *testing.T) {
+	client, url := runAgainst(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		conn, _, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		_ = conn.Close()
+	}, 50, 3*time.Second)
+
+	res, err := Run(context.Background(), config(client, url, 50, 3*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Aborted || res.AbortReason != fmt.Sprintf("%d consecutive 429, 5xx or connection errors", AbortAfter) {
+		t.Errorf("aborted=%v reason=%q; want an abort on the mix", res.Aborted, res.AbortReason)
+	}
+	if res.Failed < AbortAfter || res.Successful != 0 {
+		t.Errorf("failed=%d successful=%d", res.Failed, res.Successful)
+	}
+}
+
+// A transport error (status 0) counts toward the stop like a 429 or 5xx; a
+// 200-399 or another 4xx resets the count.
+func TestRecord_ConnectionErrorsCountTowardAbort(t *testing.T) {
+	r := &run{hist: stats.NewHistogram(), cancel: func() {}}
+	failures := func(n int) {
+		for i := range n {
+			r.record(time.Millisecond, []int{http.StatusServiceUnavailable, 0, http.StatusTooManyRequests}[i%3])
+		}
+	}
+	failures(AbortAfter - 1)
+	r.record(time.Millisecond, http.StatusNotFound)
+	failures(AbortAfter - 1)
+	r.record(time.Millisecond, http.StatusOK)
+	failures(AbortAfter - 1)
+	if r.abortReason != "" {
+		t.Fatalf("aborted after fewer than %d consecutive failures: %q", AbortAfter, r.abortReason)
+	}
+	r.record(time.Millisecond, 0)
+	if r.abortReason == "" {
+		t.Errorf("%d consecutive 429, 5xx or connection errors did not abort", AbortAfter)
+	}
+}
+
 // Requests cut off by an abort are sent but neither successful nor failed;
 // the success rate leaves them out, as the validator does.
 func TestResults_SuccessRateOfFinishedRequests(t *testing.T) {

@@ -60,7 +60,8 @@ OPTIONS:
         schedule whatever the response times, up to 256 in flight; a
         request not sent by the end of the window is unsent and fails
         the run, unless no wait for a slot delayed it and a slot is
-        free; stops early after 10 consecutive 429/5xx.
+        free; stops early after 10 consecutive 429, 5xx or connection
+        errors.
         A public host, or a robots.txt Crawl-delay, needs -i-own-this and
         LOBSTER_I_OWN_THIS=<host>. -rate is capped at 1000 with -load.
     -i-own-this

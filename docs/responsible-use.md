@@ -10,7 +10,7 @@ Only run Lobster against sites you own or have written permission to test. Witho
 ## What Lobster Enforces
 
 - **robots.txt**, including `Crawl-delay`, checked again on every redirect. Use `-ignore-robots` only with the site owner's permission.
-- **Rate**: `-rate` is the total for all workers, at least 0.1 requests per second. A 429 response backs the crawl off; during `-load`, 10 consecutive 429 or 5xx responses stop the load.
+- **Rate**: `-rate` is the total for all workers, at least 0.1 requests per second. A 429 response backs the crawl off; during `-load`, 10 consecutive 429, 5xx or connection errors stop the load.
 - **Addresses**: every connection's address is checked. Localhost and private addresses need `-allow-private-ips`, and redirects stay on the base URL's origin.
 - **Load ownership**: a `-load` against a public host, or one whose robots.txt sets a `Crawl-delay`, needs `-i-own-this` and `LOBSTER_I_OWN_THIS=<host>`. A load without them can connect only to private addresses.
 - **TLS** is verified. Skipping verification needs both `-insecure-skip-verify` and `LOBSTER_INSECURE_TLS=true`.

@@ -208,6 +208,6 @@ type LoadResults struct {
 	Late int64 `json:"late"`
 	// Unsent counts requests due in the window that were not sent: delayed by a wait for a slot, or finding no slot free, when it ended, or cut off by an abort.
 	Unsent int64 `json:"requests_unsent"`
-	// Aborted is true when consecutive 429/5xx responses stopped the load.
+	// Aborted is true when consecutive 429, 5xx or connection errors stopped the load.
 	Aborted bool `json:"load_aborted"`
 }

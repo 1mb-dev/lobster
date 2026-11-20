@@ -295,6 +295,60 @@ func TestRun_LoadAbortExits1(t *testing.T) {
 	}
 }
 
+// A server that fails every load request without a response, by dropping the
+// connection or by not answering within -timeout, stops the load as 503s do.
+func TestRun_LoadAbortsOnConnectionErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		fail func(w http.ResponseWriter, r *http.Request, release <-chan struct{})
+	}{
+		{"connection closed", func(w http.ResponseWriter, _ *http.Request, _ <-chan struct{}) {
+			if conn, _, err := http.NewResponseController(w).Hijack(); err == nil {
+				_ = conn.Close()
+			}
+		}},
+		{"timeout", func(_ http.ResponseWriter, r *http.Request, release <-chan struct{}) {
+			select {
+			case <-r.Context().Done():
+			case <-release:
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// The crawl's one page request gets 200; every load request after it fails.
+			var pageHits atomic.Int64
+			release := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/robots.txt" {
+					http.NotFound(w, r)
+					return
+				}
+				if pageHits.Add(1) > 1 {
+					tt.fail(w, r, release)
+				}
+			}))
+			defer server.Close()
+			defer close(release) // before Close, which waits for the handlers
+			output := filepath.Join(t.TempDir(), "r.json")
+
+			var stdout, stderr bytes.Buffer
+			if got := run(local(server.URL+"/", "-timeout", "200ms", "-load", "5s", "-output", output), &stdout, &stderr); got != exitFail {
+				t.Fatalf("run = %d, want %d\n%s", got, exitFail, stderr.String())
+			}
+			data, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{`"load_aborted": true`, `"abort_reason": "10 consecutive 429, 5xx or connection errors"`} {
+				if !strings.Contains(string(data), want) {
+					t.Errorf("JSON has no %s:\n%s", want, data)
+				}
+			}
+		})
+	}
+}
+
 // A crawl that fetched no page skips the load: the crawl's verdict decides,
 // with the report printed.
 func TestRun_LoadSkippedWhenNoPageResponded(t *testing.T) {
