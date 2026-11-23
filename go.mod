@@ -4,4 +4,4 @@ go 1.26.0
 
 require github.com/1mb-dev/goflow v1.6.0
 
-require golang.org/x/net v0.62.0
+require golang.org/x/net v0.63.0
